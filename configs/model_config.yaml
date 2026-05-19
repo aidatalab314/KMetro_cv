@@ -1,0 +1,30 @@
+video:
+  test_dir: "data/test_videos/metro"
+  # 指定要執行的影片檔名（僅檔名，不含路徑）
+  # 留空或設為 null 則批次處理 test_dir 下所有影片
+  target: "IMG_2734.MOV"
+  output_dir: "outputs/videos"
+  display_scale: 0.5            # 預覽視窗縮放比例
+
+luggage:
+  weight: "models/luggage/yolo_luggage_best.pt"
+  conf_threshold: 0.4
+
+  # 大小件分類方法：person_ratio（主要）或 frame_ratio（備援）
+  size_method: "person_ratio"
+
+  # [person_ratio] luggage_area / nearest_person_area >= 此值 → 大件
+  # 估算依據：大件行李約佔人體面積 25-40%，小件約 8-15%，閾值取 0.22
+  large_person_area_ratio: 0.22
+
+  # [person_ratio] 行李與行人中心點最大配對距離(px)，超過則不採用 person_ratio
+  max_match_distance_px: 400
+
+  # [frame_ratio] 備援：bbox 面積 / 畫面面積 >= 此值 → 大件
+  large_luggage_area_ratio: 0.01
+
+fall_detection:
+  weight: "models/fall_detection/yolov10s.pt"
+  conf_threshold: 0.5
+  fallen_aspect_ratio: 1.2         # bbox 寬/高 > 此值視為橫倒
+  alert_frames: 5                  # 連續 N 幀才發出警報
