@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.detection.fall_detector import FallDetector
 
-WEIGHT     = "models/fall_detection/yolov10s.pt"
+WEIGHT     = "models/fall_detection/yolo12l.pt"
 DEFAULT_VIDEO = "data/test_videos/fall/fall5.mp4"
 OUTPUT_DIR = "outputs/videos"
 

@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.detection.luggage_detector import LuggageDetector
 from src.detection.fall_detector import FallDetector
+from src.detection.pose_detector import PoseDetector
 from src.roi.roi_manager import (
     ROIManager, has_roi_record, draw_roi_interactive, save_roi_record
 )
@@ -71,7 +72,20 @@ def process(source, cfg: dict, reset_roi: bool = False):
         conf=cfg["fall_detection"]["conf_threshold"],
         fallen_aspect_ratio=cfg["fall_detection"]["fallen_aspect_ratio"],
         alert_frames=cfg["fall_detection"]["alert_frames"],
+        clahe=cfg["fall_detection"].get("clahe", True),
+        gamma=cfg["fall_detection"].get("gamma", 1.0),
+        imgsz=cfg["fall_detection"].get("imgsz", 640),
     )
+
+    pose_cfg = cfg.get("pose_fallback", {})
+    pose = PoseDetector(
+        mode=pose_cfg.get("mode", "balanced"),
+        kp_conf=pose_cfg.get("kp_conf", 0.3),
+        min_kp=pose_cfg.get("min_kp", 3),
+        fall_angle_deg=pose_cfg.get("fall_angle_deg", 50.0),
+        gamma=cfg["fall_detection"].get("gamma", 1.0),
+        device=pose_cfg.get("device", "cpu"),
+    ) if pose_cfg.get("enabled", False) else None
 
     # ROI：攝影機串流不需要 ROI 設定流程
     video_name = Path(str(source)).name if isinstance(source, str) else None
@@ -102,18 +116,30 @@ def process(source, cfg: dict, reset_roi: bool = False):
 
         roi.draw(frame)
 
-        # 1. 全幀偵測 person（供跌倒判斷與行李大小件比例共用）
+        # 1. 全幀偵測 person
         all_persons = fall.detect(frame)
 
-        # 2. 過濾：只保留 ROI 內的 person
+        # 2. 只保留 ROI 內的 YOLO person
         persons_in_roi = [d for d in all_persons
                           if roi.is_inside(d["cx"], d["cy"])]
 
-        # 3. 跌倒警報只依 ROI 內的人計算
-        alert = fall.compute_alert(persons_in_roi)
+        # 3. Pose：永遠跑、永遠只畫 ROI 內的骨架；
+        #    警報計算：YOLO 有人用 YOLO，YOLO 沒人才以 pose 補位
+        pose_in_roi = []
+        if pose is not None:
+            pose_dets = pose.detect(frame)
+            pose_in_roi = [d for d in pose_dets
+                           if roi.is_inside(d["cx"], d["cy"])]
+            pose.draw(frame, pose_in_roi)
+
+        alert_persons = persons_in_roi if persons_in_roi else pose_in_roi
+
+        # 4. 跌倒警報只依 ROI 內的人計算
+        alert = fall.compute_alert(alert_persons)
         fall.draw(frame, persons_in_roi, alert)
 
-        # 4. 行李偵測（全幀偵測後過濾 ROI）
+        # 5. 行李偵測（全幀偵測後過濾 ROI）
+        #    persons=all_persons 傳全幀是為了讓 ROI 邊緣的行李也能找到最近的人做尺寸比例
         all_luggage = luggage.detect(frame, persons=all_persons)
         luggage_in_roi = [d for d in all_luggage
                           if roi.is_inside(d["cx"], d["cy"])]

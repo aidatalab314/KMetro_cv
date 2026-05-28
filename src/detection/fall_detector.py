@@ -7,21 +7,41 @@ from collections import deque
 
 class FallDetector:
     """
-    以 YOLOv8n 通用偵測器偵測 person 類別，
+    以 YOLO12l 通用偵測器偵測 person 類別，
     判斷邏輯：人體 bbox 寬 > 高（橫倒）且持續 alert_frames 幀。
     參考：github.com/freedomwebtech/person_fall_detection
     """
 
     PERSON_CLASS = 0   # COCO class index for person
 
-    def __init__(self, weight_path: str = "models/fall_detection/yolov10s.pt",
+    def __init__(self, weight_path: str = "models/fall_detection/yolo12l.pt",
                  conf: float = 0.5, fallen_aspect_ratio: float = 1.2,
-                 alert_frames: int = 5):
+                 alert_frames: int = 5, clahe: bool = True,
+                 gamma: float = 1.0, imgsz: int = 640):
         self.model = YOLO(weight_path)
         self.conf = conf
         self.fallen_aspect_ratio = fallen_aspect_ratio
         self._history: deque[int] = deque(maxlen=alert_frames)
         self.alert_frames = alert_frames
+        self.imgsz = imgsz
+        self._clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)) if clahe else None
+        # gamma < 1 提亮暗部（0.5 = sqrt），gamma=1 不做任何處理
+        self._gamma_lut = self._build_gamma_lut(gamma) if gamma != 1.0 else None
+
+    @staticmethod
+    def _build_gamma_lut(gamma: float) -> np.ndarray:
+        return np.array([(i / 255.0) ** gamma * 255 for i in range(256)],
+                        dtype=np.uint8)
+
+    def _preprocess(self, frame: np.ndarray) -> np.ndarray:
+        if self._gamma_lut is not None:
+            frame = cv2.LUT(frame, self._gamma_lut)
+        if self._clahe is not None:
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l = self._clahe.apply(l)
+            frame = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+        return frame
 
     def _is_fallen(self, x1, y1, x2, y2) -> bool:
         w = x2 - x1
@@ -30,7 +50,8 @@ class FallDetector:
 
     def detect(self, frame: np.ndarray) -> list[dict]:
         """偵測全幀所有 person，不更新 alert 歷史（交由 compute_alert 處理）。"""
-        results = self.model(frame, conf=self.conf, verbose=False)
+        results = self.model(self._preprocess(frame), conf=self.conf,
+                             imgsz=self.imgsz, verbose=False)
         detections = []
         for r in results:
             if r.boxes is None:
