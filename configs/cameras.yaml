@@ -1,0 +1,125 @@
+# KMetro CV — 攝影機與功能設定
+#
+# 平台覆蓋：在同目錄建立 cameras.local.yaml（不進版控）
+# 範本：configs/cameras.local.yaml.example
+
+cameras:
+
+  # ── 北月台候車區 ──────────────────────────────────────────────────────────────
+  - id: cam_platform_north
+    name: "北月台候車區"
+    source: "rtsp://admin:admin@192.168.6.91/stream0"
+    fallback: "data/test_videos/metro/IMG_2733.MOV"
+    features:
+      dwell_monitor:   true    # 功能1：旅客滯留通報
+      zone_counter:    true    # 功能3：區域人流偵測
+      fire_smoke:      true    # 功能2：火光煙霧偵測
+
+  # ── 上行電扶梯 ────────────────────────────────────────────────────────────────
+  - id: cam_escalator_up
+    name: "上行電扶梯"
+    source: "rtsp://admin:admin@192.168.6.92/stream0"
+    fallback: "data/test_videos/metro/IMG_2729.MOV"
+    escalator_angle_deg: 30.0    # 電扶梯傾斜角（正值=上行）
+    features:
+      fall_detector:   true    # 功能4a：人員跌倒
+      luggage_roll:    true    # 功能4b：行李箱滾落
+      fire_smoke:      true    # 功能2：火光煙霧偵測
+
+  # ── 下行電扶梯 ────────────────────────────────────────────────────────────────
+  - id: cam_escalator_down
+    name: "下行電扶梯"
+    source: "rtsp://admin:admin@192.168.6.93/stream0"
+    fallback: "data/test_videos/metro/IMG_2745.MOV"
+    escalator_angle_deg: -30.0   # 電扶梯傾斜角（負值=下行）
+    features:
+      fall_detector:   true    # 功能4a：人員跌倒
+      luggage_roll:    true    # 功能4b：行李箱滾落
+      fire_smoke:      true    # 功能2：火光煙霧偵測
+
+  # ── 電梯前乘場 ────────────────────────────────────────────────────────────────
+  - id: cam_elevator_lobby
+    name: "電梯前乘場"
+    source: "rtsp://admin:admin@192.168.6.94/stream0"
+    fallback: "data/test_videos/metro/IMG_2749.MOV"
+    features:
+      size_classifier: true    # 功能5：大件行李／輪椅偵測
+      dwell_monitor:   true    # 功能1：電梯前等候滯留
+      fire_smoke:      true    # 功能2：火光煙霧偵測
+
+
+# ── 模型路徑 ─────────────────────────────────────────────────────────────────
+models:
+  person:     "models/fall_detection/yolo12l.pt"
+  luggage:    "models/luggage/yolo_luggage_best.pt"
+  fire_smoke: "models/fire_smoke/fire_smoke.pt"   # 待取得；不存在時自動略過
+
+
+# ── 推論設定 ──────────────────────────────────────────────────────────────────
+detector:
+  conf:         0.4
+  device:       "mps"       # Mac M1/M2 → "mps" | Jetson CUDA → "0" | CPU → "cpu"
+  imgsz:        640         # 推論解析度（640 平衡 / 1280 細節較慢）
+  skip_frames:  2           # 每 N 幀推論一次；mosaic_fps 需同步調整
+
+
+# ── 各功能閾值 ────────────────────────────────────────────────────────────────
+features:
+
+  dwell_monitor:
+    alert_seconds:          60.0   # ROI 內滯留超過此秒 → 告警
+    grace_period_sec:       10.0   # track_id 消失後保留計時的緩衝秒數
+    max_disappeared_frames: 30     # ByteTrack：ID 消失幾幀後才刪除
+                                   # 有效重入窗口 ≈ 此值 ÷ (source_fps ÷ skip_frames)
+
+  zone_counter:
+    interval_seconds:   15         # 每 N 秒統計一次人數
+    crowd_alert_count:  20         # ROI 內人數超過此值 → 人潮告警
+
+  fire_smoke:
+    conf:         0.5              # 火煙偵測信心門檻（高於 detector.conf）
+    alert_frames: 3                # 連續幾幀確認後告警
+
+  fall_detector:
+    fallen_aspect_ratio: 1.2       # bbox 寬/高 > 此值視為橫倒
+    alert_frames:        5         # 連續幾幀才發警報
+    clahe:               true      # CLAHE 對比增強（暗區／電扶梯建議開）
+    gamma:               0.5       # Gamma 校正（<1 提亮，1.0=關閉）
+    imgsz:               1280      # 跌倒偵測用較高解析度
+    pose_fallback:                 # RTMO bottom-up 補位（遮蔽暗區場景）
+      enabled:        false        # 效能較重，預設關；電扶梯場景可開
+      mode:           "balanced"   # lightweight / balanced / performance
+      kp_conf:        0.3          # 關節點信心門檻
+      min_kp:         3            # 最少有效關節點數
+      fall_angle_deg: 50.0         # 肩-髖向量與垂直軸夾角超過此值 → 跌倒
+      device:         "cpu"
+
+  luggage_roll:
+    speed_threshold_px_per_frame:        15    # 行李本身速度門檻
+    independence_threshold_px_per_frame: 10    # 行李與最近人的速度差門檻
+    alert_frames:                        5
+    max_match_distance_px:               300   # ByteTrack 行李配對距離上限
+
+  size_classifier:
+    size_method:             "person_ratio"    # 主要方法
+    large_person_area_ratio: 0.22              # 行李面積/人體面積 ≥ 此值 → 大件
+    max_match_distance_px:   400               # 超過此距離改用 frame_ratio
+    large_area_ratio:        0.01              # frame_ratio 備援門檻
+
+
+# ── 顯示設定 ─────────────────────────────────────────────────────────────────
+display:
+  panel_h: 540      # 每路攝影機面板高度（px）
+  window:  "KMetro CV — Multistream"
+
+
+# ── 輸出設定 ─────────────────────────────────────────────────────────────────
+output:
+  snapshot_dir:     "data/snapshots"
+  log_dir:          "data/logs"
+  video_dir:        "outputs/videos"
+  save_snapshots:   true
+  save_video_local: true     # 本地影片來源 → 強制存 per-camera 影片
+  save_video_rtsp:  false    # RTSP 來源 → 預設不存（可在 local.yaml 覆蓋）
+  save_mosaic:      true     # 四格合成影片（dev: display loop；op: 獨立 thread）
+  mosaic_fps:       15       # ⚠️ 必須 = source_fps ÷ skip_frames（30÷2=15）

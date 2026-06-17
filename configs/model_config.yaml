@@ -1,47 +1,42 @@
+# model_config.yaml — 舊版單影片模式設定
+#
+# 供 src/pipeline/run_inference.py 使用（backward compat）。
+# 新版多流架構請使用 cameras.yaml。
+#
+# 可用測試影片（data/test_videos/metro/）：
+#   IMG_2661  IMG_2698  IMG_2727  IMG_2728  IMG_2729
+#   IMG_2730  IMG_2731  IMG_2732  IMG_2733  IMG_2734
+#   IMG_2740  IMG_2741  IMG_2742  IMG_2743  IMG_2744
+#   IMG_2745  IMG_2746  IMG_2747  IMG_2748  IMG_2749
+#   IMG_2750  IMG_2751
+
 video:
-  test_dir: "data/test_videos/metro"
-  # 指定要執行的影片檔名（僅檔名，不含路徑）
-  # 留空或設為 null 則批次處理 test_dir 下所有影片
-  # 可用影片：
-  #   IMG_2661.MOV  IMG_2698.MOV  IMG_2727.MOV  IMG_2728.MOV  IMG_2729.MOV
-  #   IMG_2730.MOV  IMG_2731.MOV  IMG_2732.MOV  IMG_2733.MOV  IMG_2734.MOV
-  #   IMG_2740.MOV  IMG_2741.MOV  IMG_2742.MOV  IMG_2743.MOV  IMG_2744.MOV
-  #   IMG_2745.MOV  IMG_2746.MOV  IMG_2747.MOV  IMG_2748.MOV  IMG_2749.MOV
-  #   IMG_2750.MOV  IMG_2751.MOV
-  target: "IMG_2732.MOV"
-  output_dir: "outputs/videos"
-  display_scale: 0.5            # 預覽視窗縮放比例
+  test_dir:      "data/test_videos/metro"
+  target:        "IMG_2733.MOV"    # 留空或 null 批次處理 test_dir 所有影片
+  output_dir:    "outputs/videos"
+  display_scale: 0.5               # 預覽視窗縮放比例
 
 luggage:
-  weight: "models/luggage/yolo_luggage_best.pt"
-  conf_threshold: 0.4
-
-  # 大小件分類方法：person_ratio（主要）或 frame_ratio（備援）
-  size_method: "person_ratio"
-
-  # [person_ratio] luggage_area / nearest_person_area >= 此值 → 大件
-  # 估算依據：大件行李約佔人體面積 25-40%，小件約 8-15%，閾值取 0.22
-  large_person_area_ratio: 0.22
-
-  # [person_ratio] 行李與行人中心點最大配對距離(px)，超過則不採用 person_ratio
-  max_match_distance_px: 400
-
-  # [frame_ratio] 備援：bbox 面積 / 畫面面積 >= 此值 → 大件
-  large_luggage_area_ratio: 0.01
-
-pose_fallback:
-  enabled: false                    # false 可完全關閉，不影響主流程
-  mode: "balanced"                 # RTMO 模型大小：lightweight / balanced / performance
-  kp_conf: 0.3                     # 關節點信心門檻
-  min_kp: 3                        # 至少需要幾個有效關節點才算偵測到人
-  fall_angle_deg: 50.0             # 肩-髖向量與垂直軸夾角超過此值 → 橫倒
-  device: "cpu"
+  weight:                  "models/luggage/yolo_luggage_best.pt"
+  conf:                    0.4
+  size_method:             "person_ratio"   # person_ratio（主）/ frame_ratio（備援）
+  large_person_area_ratio: 0.22             # 行李面積/人體面積 ≥ 此值 → 大件
+  max_match_distance_px:   400
+  large_area_ratio:        0.01             # frame_ratio 備援門檻
 
 fall_detection:
-  weight: "models/fall_detection/yolo12l.pt"
-  conf_threshold: 0.3
-  fallen_aspect_ratio: 1.2         # bbox 寬/高 > 此值視為橫倒
-  alert_frames: 5                  # 連續 N 幀才發出警報
-  clahe: true                      # CLAHE 對比增強，改善暗區（電扶梯）偵測率
-  gamma: 0.5                       # gamma < 1 提亮暗部（0.5 = sqrt），1.0 = 關閉
-  imgsz: 1280                      # YOLO 推論解析度，越大保留細節越多（640 / 1280）
+  weight:              "models/fall_detection/yolo12l.pt"
+  conf:                0.4
+  fallen_aspect_ratio: 1.2    # bbox 寬/高 > 此值視為橫倒
+  alert_frames:        5
+  clahe:               true   # CLAHE 對比增強（暗區建議開）
+  gamma:               0.5    # <1 提亮，1.0=關閉
+  imgsz:               1280
+
+pose_fallback:
+  enabled:        false
+  mode:           "balanced"  # lightweight / balanced / performance
+  kp_conf:        0.3
+  min_kp:         3
+  fall_angle_deg: 50.0
+  device:         "cpu"

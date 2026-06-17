@@ -10,6 +10,9 @@ class FallDetector:
     以 YOLO12l 通用偵測器偵測 person 類別，
     判斷邏輯：人體 bbox 寬 > 高（橫倒）且持續 alert_frames 幀。
     參考：github.com/freedomwebtech/person_fall_detection
+
+    tracking=True 時使用 ByteTrack（ultralytics 內建），
+    偵測結果額外帶 track_id 欄位（-1 表示尚未指派）。
     """
 
     PERSON_CLASS = 0   # COCO class index for person
@@ -17,13 +20,15 @@ class FallDetector:
     def __init__(self, weight_path: str = "models/fall_detection/yolo12l.pt",
                  conf: float = 0.5, fallen_aspect_ratio: float = 1.2,
                  alert_frames: int = 5, clahe: bool = True,
-                 gamma: float = 1.0, imgsz: int = 640):
+                 gamma: float = 1.0, imgsz: int = 640,
+                 tracking: bool = False):
         self.model = YOLO(weight_path)
         self.conf = conf
         self.fallen_aspect_ratio = fallen_aspect_ratio
         self._history: deque[int] = deque(maxlen=alert_frames)
         self.alert_frames = alert_frames
         self.imgsz = imgsz
+        self._tracking = tracking
         self._clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)) if clahe else None
         # gamma < 1 提亮暗部（0.5 = sqrt），gamma=1 不做任何處理
         self._gamma_lut = self._build_gamma_lut(gamma) if gamma != 1.0 else None
@@ -49,9 +54,19 @@ class FallDetector:
         return h > 0 and (w / h) >= self.fallen_aspect_ratio
 
     def detect(self, frame: np.ndarray) -> list[dict]:
-        """偵測全幀所有 person，不更新 alert 歷史（交由 compute_alert 處理）。"""
-        results = self.model(self._preprocess(frame), conf=self.conf,
-                             imgsz=self.imgsz, verbose=False)
+        """
+        偵測全幀所有 person，不更新 alert 歷史（交由 compute_alert 處理）。
+        tracking=True 時使用 ByteTrack，結果含 track_id（-1 = 未指派）。
+        """
+        processed = self._preprocess(frame)
+        if self._tracking:
+            results = self.model.track(processed, conf=self.conf, imgsz=self.imgsz,
+                                       verbose=False, tracker="bytetrack.yaml",
+                                       persist=True)
+        else:
+            results = self.model(processed, conf=self.conf,
+                                 imgsz=self.imgsz, verbose=False)
+
         detections = []
         for r in results:
             if r.boxes is None:
@@ -62,12 +77,16 @@ class FallDetector:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
                 fallen = self._is_fallen(x1, y1, x2, y2)
+                track_id = (int(box.id[0])
+                            if self._tracking and box.id is not None
+                            else -1)
                 detections.append({
-                    "bbox": (x1, y1, x2, y2),
-                    "conf": conf,
-                    "fallen": fallen,
-                    "cx": (x1 + x2) // 2,
-                    "cy": (y1 + y2) // 2,
+                    "bbox":     (x1, y1, x2, y2),
+                    "conf":     conf,
+                    "fallen":   fallen,
+                    "cx":       (x1 + x2) // 2,
+                    "cy":       (y1 + y2) // 2,
+                    "track_id": track_id,
                 })
         return detections
 
@@ -83,7 +102,11 @@ class FallDetector:
         for det in detections:
             x1, y1, x2, y2 = det["bbox"]
             color = (0, 0, 255) if det["fallen"] else (0, 255, 0)
-            label = f"FALL {det['conf']:.2f}" if det["fallen"] else f"person {det['conf']:.2f}"
+            tid   = det.get("track_id", -1)
+            id_prefix = f"ID:{tid} " if tid >= 0 else ""
+            label = (f"{id_prefix}FALL {det['conf']:.2f}"
+                     if det["fallen"]
+                     else f"{id_prefix}person {det['conf']:.2f}")
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             cv2.circle(frame, ((x1+x2)//2, (y1+y2)//2), 5, (0, 0, 255), -1)

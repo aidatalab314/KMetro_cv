@@ -9,13 +9,15 @@ class LuggageDetector:
                  size_method: str = "person_ratio",
                  large_person_area_ratio: float = 0.22,
                  max_match_distance_px: float = 400,
-                 large_area_ratio: float = 0.01):
+                 large_area_ratio: float = 0.01,
+                 tracking: bool = False):
         self.model = YOLO(weight_path)
         self.conf = conf
         self.size_method = size_method
         self.large_person_area_ratio = large_person_area_ratio
         self.max_match_distance_px = max_match_distance_px
         self.large_area_ratio = large_area_ratio
+        self._tracking = tracking
 
     def _nearest_person(self, cx: int, cy: int,
                         persons: list[dict]) -> dict | None:
@@ -58,24 +60,36 @@ class LuggageDetector:
     def detect(self, frame: np.ndarray,
                persons: list[dict] = None) -> list[dict]:
         """
-        persons: FallDetector.detect() 回傳的行人偵測結果（共用 yolov10s）
+        persons: FallDetector.detect() 回傳的行人偵測結果，供 person_ratio 計算。
+        tracking=True 時使用 ByteTrack，結果含 track_id（-1 = 未指派）。
         """
         h, w = frame.shape[:2]
-        results = self.model(frame, conf=self.conf, verbose=False)
+        if self._tracking:
+            results = self.model.track(frame, conf=self.conf, verbose=False,
+                                       tracker="bytetrack.yaml", persist=True)
+        else:
+            results = self.model(frame, conf=self.conf, verbose=False)
+
         detections = []
         for r in results:
+            if r.boxes is None:
+                continue
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
                 size, method = self._classify_size(
                     x1, y1, x2, y2, h, w, persons or [])
+                track_id = (int(box.id[0])
+                            if self._tracking and box.id is not None
+                            else -1)
                 detections.append({
-                    "bbox": (x1, y1, x2, y2),
-                    "conf": conf,
-                    "size": size,
-                    "method": method,
-                    "cx": (x1 + x2) // 2,
-                    "cy": (y1 + y2) // 2,
+                    "bbox":     (x1, y1, x2, y2),
+                    "conf":     conf,
+                    "size":     size,
+                    "method":   method,
+                    "cx":       (x1 + x2) // 2,
+                    "cy":       (y1 + y2) // 2,
+                    "track_id": track_id,
                 })
         return detections
 

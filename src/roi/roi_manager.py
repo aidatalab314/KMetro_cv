@@ -4,61 +4,189 @@ import cv2
 from pathlib import Path
 
 
-# ── 互動式繪製工具 ────────────────────────────────────────────────────────────
+# ── Feature definitions ───────────────────────────────────────────────────────
+# key, feature_name, short_english_label (cv2.putText is ASCII-only)
 
-def draw_roi_interactive(video_path: str) -> list[dict]:
+_FEATURE_MENU = [
+    ("1", "dwell_monitor",   "Dwell Monitor"),
+    ("2", "zone_counter",    "Zone Counter"),
+    ("3", "fall_detector",   "Fall Detect"),
+    ("4", "luggage_roll",    "Luggage Roll"),
+    ("5", "size_classifier", "Size Classify"),
+    ("6", "fire_smoke",      "Fire/Smoke"),
+]
+
+_FEATURE_COLORS = {
+    "dwell_monitor":   (0, 255, 255),
+    "zone_counter":    (255, 0, 255),
+    "fall_detector":   (0, 165, 255),
+    "luggage_roll":    (0, 0, 255),
+    "size_classifier": (0, 255, 0),
+    "fire_smoke":      (255, 80,  0),
+}
+
+_DEFAULT_COLOR = (200, 200, 200)
+
+
+def _feature_color(features: list[str]) -> tuple:
+    """Pick the color of the first known feature; fallback to default."""
+    for f in features:
+        if f in _FEATURE_COLORS:
+            return _FEATURE_COLORS[f]
+    return _DEFAULT_COLOR
+
+
+# ── Multi-select feature menu (OpenCV overlay, ASCII-only text) ───────────────
+
+def _select_features(win: str, display_frame: np.ndarray,
+                     enabled_features: list[str] | None) -> list[str]:
     """
-    從影片第一幀開啟互動式 ROI 繪製。
-    操作說明：
-      左鍵       加點
-      右鍵       刪除最後一點
-      C          確認當前多邊形（至少 3 點）
-      R          重置當前未完成多邊形
-      ESC / Q    儲存並結束
-    回傳已完成的 ROI 列表。
+    Show a toggle-style multi-select feature menu after an ROI is confirmed.
+
+    Controls:
+      Number keys  toggle individual features ON/OFF
+      [A]          select ALL enabled features
+      [C]          clear all selections
+      [Enter/Spc]  confirm (empty selection defaults to all enabled)
+      [ESC]        cancel this ROI (returns empty list)
+
+    Returns list of selected feature names, or [] to cancel.
+    """
+    options = [
+        (key, feat, label)
+        for key, feat, label in _FEATURE_MENU
+        if not enabled_features or feat in enabled_features
+    ]
+    if not options:
+        return []
+
+    selected: set[str] = set()
+
+    while True:
+        frame = display_frame.copy()
+        fh, fw = frame.shape[:2]
+
+        menu_w = 520
+        menu_h = 88 + len(options) * 38
+        mx = (fw - menu_w) // 2
+        my = (fh - menu_h) // 2
+
+        # Semi-transparent dark background
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (mx - 12, my - 12),
+                      (mx + menu_w + 12, my + menu_h + 12), (12, 12, 12), -1)
+        cv2.addWeighted(overlay, 0.88, frame, 0.12, 0, frame)
+        cv2.rectangle(frame, (mx - 12, my - 12),
+                      (mx + menu_w + 12, my + menu_h + 12), (70, 70, 70), 1)
+
+        # Title
+        cv2.putText(frame, "Select features for this ROI:",
+                    (mx, my + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2)
+        cv2.putText(frame, "Press keys to toggle, Enter to confirm",
+                    (mx, my + 50), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (120, 120, 120), 1)
+
+        # Feature rows
+        for i, (key, feat, label) in enumerate(options):
+            y     = my + 78 + i * 38
+            is_on = feat in selected
+            color = _FEATURE_COLORS.get(feat, _DEFAULT_COLOR) if is_on else (70, 70, 70)
+            check = "[X]" if is_on else "[ ]"
+            row   = f"[{key.upper()}]  {check}  {feat:<20}  {label}"
+            cv2.putText(frame, row, (mx, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.60, color, 1 if not is_on else 2)
+
+        # Bottom hints
+        y_bot = my + menu_h
+        sel_str = ", ".join(sorted(selected)) if selected else "(none - Enter=all)"
+        cv2.putText(frame, f"Selected: {sel_str}",
+                    (mx, y_bot - 28), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (160, 160, 160), 1)
+        cv2.putText(frame, "[A]=all  [C]=clear  [Enter/Spc]=confirm  [ESC]=cancel ROI",
+                    (mx, y_bot - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (80, 80, 80), 1)
+
+        cv2.imshow(win, frame)
+        k = cv2.waitKey(30) & 0xFF
+
+        # Toggle individual
+        for key, feat, _ in options:
+            if k == ord(key):
+                if feat in selected:
+                    selected.discard(feat)
+                else:
+                    selected.add(feat)
+                break
+
+        if k in (ord('a'), ord('A')):
+            selected = {feat for _, feat, _ in options}
+        elif k in (ord('c'), ord('C')):
+            selected.clear()
+        elif k in (13, ord(' ')):       # Enter or Space → confirm
+            return list(selected) if selected else [feat for _, feat, _ in options]
+        elif k == 27:                   # ESC → cancel this ROI
+            return []
+
+
+# ── Interactive ROI drawing tool ──────────────────────────────────────────────
+
+def draw_roi_interactive(video_path: str,
+                          enabled_features: list[str] | None = None) -> list[dict]:
+    """
+    Open interactive ROI drawing on the first frame of video_path.
+
+    Controls:
+      Left-click     add vertex
+      Right-click    remove last vertex
+      [C]            confirm polygon (>=3 pts) -> feature selection menu
+      [R]            reset current unfinished polygon
+      [ESC / Q]      save & quit  (auto-confirms pending polygon, features=all)
+
+    Each ROI stores a list of features in the "features" key.
     """
     cap = cv2.VideoCapture(video_path)
     ret, original = cap.read()
     cap.release()
     if not ret:
-        raise RuntimeError(f"無法讀取影片第一幀: {video_path}")
+        raise RuntimeError(f"Cannot read first frame: {video_path}")
 
-    H, W = original.shape[:2]
+    H, W  = original.shape[:2]
     scale = min(1.0, 1280 / W)
     win   = f"ROI Setup  [{Path(video_path).name}]"
 
-    COLORS = [
-        (0, 255, 255),
-        (255, 0, 255),
-        (0, 255, 0),
-        (0, 165, 255),
-        (255, 100, 0),
-    ]
+    state: dict = {"pts": [], "rois": []}
 
-    state = {"pts": [], "rois": []}
-
-    def _color(idx: int):
-        return COLORS[idx % len(COLORS)]
+    def _roi_color(roi: dict) -> tuple:
+        return tuple(roi["color"])
 
     def _redraw():
         frame = original.copy()
 
-        # 已完成的 ROI：半透明填色 + 邊框 + 標籤
+        # Confirmed ROIs
+        full_idx = 0
         for roi in state["rois"]:
-            poly  = np.array(roi["points"], np.int32)
-            color = tuple(roi["color"])
-            overlay = frame.copy()
-            cv2.fillPoly(overlay, [poly], color)
-            # 使用獨立 result 變數避免 src/dst 衝突
-            result = cv2.addWeighted(overlay, 0.35, frame, 0.65, 0)
-            np.copyto(frame, result)
-            cv2.polylines(frame, [poly], True, color, 3)
-            cv2.putText(frame, roi["label"], tuple(poly[0]),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+            poly     = np.array(roi["points"], np.int32)
+            color    = _roi_color(roi)
+            feats    = roi.get("features", ["all"])
+            is_full  = roi.get("full_frame", False)
+            feat_str = "+".join(f.split("_")[0][:4] for f in feats)
+            if is_full:
+                cv2.rectangle(frame, (4 + full_idx * 3, 4 + full_idx * 3),
+                              (W - 4 - full_idx * 3, H - 4 - full_idx * 3), color, 3)
+                caption = f"[Full Frame] [{feat_str}]"
+                cv2.putText(frame, caption, (14, 40 + full_idx * 32),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.80, color, 2)
+                full_idx += 1
+            else:
+                overlay = frame.copy()
+                cv2.fillPoly(overlay, [poly], color)
+                result  = cv2.addWeighted(overlay, 0.28, frame, 0.72, 0)
+                np.copyto(frame, result)
+                cv2.polylines(frame, [poly], True, color, 3)
+                caption  = f"{roi['label']} [{feat_str}]"
+                cv2.putText(frame, caption, tuple(poly[0]),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.80, color, 2)
 
-        # 繪製中的多邊形
-        cur_color = _color(len(state["rois"]))
+        # Current in-progress polygon
         pts = state["pts"]
+        cur_color = (180, 180, 180)
         for pt in pts:
             cv2.circle(frame, pt, 7, cur_color, -1)
         if len(pts) >= 2:
@@ -66,39 +194,36 @@ def draw_roi_interactive(video_path: str) -> list[dict]:
             if len(pts) >= 3:
                 overlay = frame.copy()
                 cv2.fillPoly(overlay, [poly], cur_color)
-                result = cv2.addWeighted(overlay, 0.25, frame, 0.75, 0)
+                result  = cv2.addWeighted(overlay, 0.18, frame, 0.82, 0)
                 np.copyto(frame, result)
                 cv2.polylines(frame, [poly], True, cur_color, 2)
             else:
                 cv2.polylines(frame, [poly], False, cur_color, 2)
 
-        # 操作說明（白字黑邊）
+        # Instructions (ASCII only)
         tips = [
-            "Left click : add point",
-            "Right click: undo point",
-            "[C]        : confirm ROI (>=3 pts)",
-            "[R]        : reset current ROI",
-            "[ESC/Q]    : save & quit (auto-confirm if pending)",
+            "Left-click : add point",
+            "Right-click: undo point",
+            "[C]        : confirm polygon -> pick feature(s)",
+            "[F]        : full frame (no polygon needed)",
+            "[R]        : reset current polygon",
+            "[ESC/Q]    : save & quit",
             f"ROIs done  : {len(state['rois'])}",
         ]
         for i, t in enumerate(tips):
             y = 28 + i * 24
-            cv2.putText(frame, t, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (0, 0, 0), 3)
-            cv2.putText(frame, t, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6, (255, 255, 255), 1)
+            cv2.putText(frame, t, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 0, 0), 3)
+            cv2.putText(frame, t, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 1)
 
-        # 未確認點達 3 個時顯示提示
-        if len(state["pts"]) >= 3:
-            hint = ">> Press [C] to confirm  or  [ESC] to auto-confirm & quit <<"
-            cv2.putText(frame, hint, (10, frame.shape[0] - 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3)
-            cv2.putText(frame, hint, (10, frame.shape[0] - 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+        if len(pts) >= 3:
+            hint = ">> [C] confirm & select feature(s) <<"
+            y = frame.shape[0] - 15
+            cv2.putText(frame, hint, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 0, 0), 3)
+            cv2.putText(frame, hint, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 1)
 
         display = cv2.resize(frame, None, fx=scale, fy=scale)
         cv2.imshow(win, display)
-        cv2.waitKey(1)   # 強制刷新畫面，避免 imshow 未即時生效
+        cv2.waitKey(1)
 
     def _mouse(event, x, y, flags, param):
         ox, oy = int(x / scale), int(y / scale)
@@ -119,104 +244,196 @@ def draw_roi_interactive(video_path: str) -> list[dict]:
 
         if key in (ord('c'), ord('C')):
             if len(state["pts"]) >= 3:
-                idx = len(state["rois"])
+                pts_snap = list(state["pts"])
+                # Build display for feature menu
+                disp = cv2.resize(original.copy(), None, fx=scale, fy=scale)
+                poly_disp = (np.array(pts_snap, np.float32) * scale).astype(np.int32)
+                cv2.polylines(disp, [poly_disp], True, (220, 220, 220), 2)
+
+                feats = _select_features(win, disp, enabled_features)
+                if not feats:           # ESC → cancel this polygon
+                    print("[ROI] Cancelled.")
+                    _redraw()
+                    continue
+
+                color = list(_feature_color(feats))
+                idx   = len(state["rois"])
                 state["rois"].append({
-                    "id":     f"roi_{idx}",
-                    "label":  f"ROI {idx}",
-                    "color":  list(_color(idx)),
-                    "points": [list(p) for p in state["pts"]],
+                    "id":       f"roi_{idx}",
+                    "label":    f"ROI {idx}",
+                    "features": feats,
+                    "color":    color,
+                    "points":   [list(p) for p in pts_snap],
                 })
                 state["pts"] = []
                 _redraw()
-                print(f"[ROI] ROI {idx} confirmed  ({len(state['rois'][-1]['points'])} pts)")
+                print(f"[ROI] ROI {idx} confirmed  features={feats}  ({len(pts_snap)} pts)")
             else:
-                print("[ROI] 至少需要 3 個點才能確認 ROI")
+                print("[ROI] Need at least 3 points.")
+
+        elif key in (ord('f'), ord('F')):
+            disp  = cv2.resize(original.copy(), None, fx=scale, fy=scale)
+            feats = _select_features(win, disp, enabled_features)
+            if feats:
+                color = list(_feature_color(feats))
+                idx   = len(state["rois"])
+                state["rois"].append({
+                    "id":         f"roi_{idx}",
+                    "label":      "Full Frame",
+                    "features":   feats,
+                    "color":      color,
+                    "full_frame": True,
+                    "points":     [[0, 0], [W, 0], [W, H], [0, H]],
+                })
+                _redraw()
+                print(f"[ROI] Full-frame ROI confirmed  features={feats}")
 
         elif key in (ord('r'), ord('R')):
             state["pts"] = []
             _redraw()
 
         elif key in (27, ord('q'), ord('Q')):
-            # 有未確認的點（≥3）自動完成最後一個 ROI
             if len(state["pts"]) >= 3:
                 idx = len(state["rois"])
+                all_feats = [f for _, f, _ in _FEATURE_MENU
+                             if not enabled_features or f in enabled_features]
                 state["rois"].append({
-                    "id":     f"roi_{idx}",
-                    "label":  f"ROI {idx}",
-                    "color":  list(_color(idx)),
-                    "points": [list(p) for p in state["pts"]],
+                    "id":       f"roi_{idx}",
+                    "label":    f"ROI {idx}",
+                    "features": all_feats or ["all"],
+                    "color":    list(_DEFAULT_COLOR),
+                    "points":   [list(p) for p in state["pts"]],
                 })
-                print(f"[ROI] ROI {idx} auto-confirmed on exit  ({len(state['pts'])} pts)")
+                print(f"[ROI] ROI {idx} auto-confirmed on exit  (features=all, {len(state['pts'])} pts)")
             break
 
     cv2.destroyWindow(win)
     return state["rois"]
 
 
-# ── 紀錄檔 I/O ────────────────────────────────────────────────────────────────
+# ── Records I/O ───────────────────────────────────────────────────────────────
 
-def has_roi_record(video_name: str, records_path: str) -> bool:
+def has_roi_record(camera_id: str, records_path: str) -> bool:
     p = Path(records_path)
     if not p.exists():
         return False
     with open(p) as f:
-        return video_name in json.load(f)
+        return camera_id in json.load(f)
 
 
-def save_roi_record(video_name: str, rois: list[dict], records_path: str):
+def save_roi_record(camera_id: str, rois: list[dict], records_path: str):
     p = Path(records_path)
     records = {}
     if p.exists():
         with open(p) as f:
             records = json.load(f)
-    records[video_name] = rois
+    records[camera_id] = rois
     with open(p, "w") as f:
         json.dump(records, f, indent=2, ensure_ascii=False)
-    print(f"[ROI] 已儲存 {len(rois)} 個 ROI → {records_path}  (key: {video_name})")
+    print(f"[ROI] Saved {len(rois)} ROI(s) -> {records_path}  (key: {camera_id})")
 
 
-# ── ROI 管理器 ────────────────────────────────────────────────────────────────
+# ── ROI Manager ───────────────────────────────────────────────────────────────
 
 class ROIManager:
-    def __init__(self, video_name: str, records_path: str):
-        self.rois = []
+    """
+    Loads and manages ROIs for a given camera.
+
+    Each ROI has a "features" list (new format) or legacy "feature" string.
+    - is_inside_for_feature(cx, cy, feat):
+        True if point is inside any ROI tagged for this feat.
+        No ROI for feat -> False (skip this feature, no full-frame fallback).
+    - is_inside(cx, cy):
+        Legacy: True if inside any ROI, or True when no ROIs at all (full-frame).
+    """
+
+    def __init__(self, camera_id: str, records_path: str):
+        self.rois: list[dict] = []
+        self._by_feature: dict[str, list[dict]] = {}
+
         p = Path(records_path)
-        if p.exists():
-            with open(p) as f:
-                records = json.load(f)
-            for r in records.get(video_name, []):
-                self.rois.append({
-                    "id":      r["id"],
-                    "label":   r["label"],
-                    "color":   tuple(r["color"]),
-                    "polygon": np.array(r["points"], np.int32),
-                })
+        if not p.exists():
+            return
+        with open(p) as f:
+            records = json.load(f)
 
-    def draw(self, frame: np.ndarray) -> np.ndarray:
-        for roi in self.rois:
-            poly  = roi["polygon"]
-            color = roi["color"]
-            overlay = frame.copy()
-            cv2.fillPoly(overlay, [poly], color)
-            result = cv2.addWeighted(overlay, 0.20, frame, 0.80, 0)
-            np.copyto(frame, result)
-            cv2.polylines(frame, [poly], True, color, 3)
-            cv2.putText(frame, roi["label"], tuple(poly[0]),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
-        return frame
+        for r in records.get(camera_id, []):
+            # Support both new "features" (list) and legacy "feature" (str)
+            if "features" in r:
+                features = r["features"]
+            elif "feature" in r:
+                features = [r["feature"]]
+            else:
+                features = ["all"]
 
-    def get_containing_rois(self, cx: int, cy: int) -> list[str]:
-        return [
-            roi["label"]
-            for roi in self.rois
-            if cv2.pointPolygonTest(roi["polygon"], (float(cx), float(cy)), False) >= 0
-        ]
+            entry = {
+                "id":         r["id"],
+                "label":      r["label"],
+                "features":   features,
+                "color":      tuple(r["color"]),
+                "full_frame": r.get("full_frame", False),
+                "polygon":    np.array(r["points"], np.int32),
+            }
+            self.rois.append(entry)
+            for feat in features:
+                self._by_feature.setdefault(feat, []).append(entry)
+
+    # ── Feature-specific queries ──────────────────────────────────────────────
+
+    def has_roi_for_feature(self, feature: str) -> bool:
+        return bool(self._by_feature.get(feature))
+
+    def is_inside_for_feature(self, cx: int, cy: int, feature: str) -> bool:
+        candidates = self._by_feature.get(feature, [])
+        if not candidates:
+            return False
+        pt = (float(cx), float(cy))
+        return any(cv2.pointPolygonTest(r["polygon"], pt, False) >= 0
+                   for r in candidates)
+
+    def get_containing_rois_for_feature(self, cx: int, cy: int,
+                                         feature: str) -> list[str]:
+        pt = (float(cx), float(cy))
+        return [r["label"] for r in self._by_feature.get(feature, [])
+                if cv2.pointPolygonTest(r["polygon"], pt, False) >= 0]
+
+    # ── Legacy ────────────────────────────────────────────────────────────────
 
     def is_inside(self, cx: int, cy: int) -> bool:
-        """若無 ROI 設定則視為全幀皆在範圍內（無圍籬模式）"""
         if not self.rois:
             return True
-        return any(
-            cv2.pointPolygonTest(roi["polygon"], (float(cx), float(cy)), False) >= 0
-            for roi in self.rois
-        )
+        pt = (float(cx), float(cy))
+        return any(cv2.pointPolygonTest(r["polygon"], pt, False) >= 0
+                   for r in self.rois)
+
+    def get_containing_rois(self, cx: int, cy: int) -> list[str]:
+        pt = (float(cx), float(cy))
+        return [r["label"] for r in self.rois
+                if cv2.pointPolygonTest(r["polygon"], pt, False) >= 0]
+
+    # ── Draw ──────────────────────────────────────────────────────────────────
+
+    def draw(self, frame: np.ndarray) -> np.ndarray:
+        h, w     = frame.shape[:2]
+        full_idx = 0
+        for roi in self.rois:
+            poly     = roi["polygon"]
+            color    = roi["color"]
+            feats    = roi.get("features", ["all"])
+            is_full  = roi.get("full_frame", False)
+            feat_str = "+".join(f.split("_")[0][:4] for f in feats)
+            if is_full:
+                cv2.rectangle(frame, (3 + full_idx * 3, 3 + full_idx * 3),
+                              (w - 3 - full_idx * 3, h - 3 - full_idx * 3), color, 2)
+                cv2.putText(frame, f"[Full] [{feat_str}]", (10, 28 + full_idx * 26),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.62, color, 2)
+                full_idx += 1
+            else:
+                overlay = frame.copy()
+                cv2.fillPoly(overlay, [poly], color)
+                result  = cv2.addWeighted(overlay, 0.15, frame, 0.85, 0)
+                np.copyto(frame, result)
+                cv2.polylines(frame, [poly], True, color, 2)
+                cv2.putText(frame, f"{roi['label']} [{feat_str}]", tuple(poly[0]),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.62, color, 2)
+        return frame

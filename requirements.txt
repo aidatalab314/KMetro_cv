@@ -7,3 +7,4 @@ torchvision>=0.15.0
 onnxruntime>=1.17.0
 rtmlib>=0.0.15
 cvzone
+lapx>=0.5.5        # ByteTrack 匈牙利算法依賴（ultralytics tracking）

@@ -1,0 +1,51 @@
+# cameras.local.yaml.example — 本機平台覆蓋設定範本
+#
+# 使用方式：
+#   cp configs/cameras.local.yaml.example configs/cameras.local.yaml
+# 此檔案已加入 .gitignore，不進版控。
+# utils.load_yaml() 會將 cameras.local.yaml 的值合併覆蓋 cameras.yaml。
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Jetson Orin（現場部署）
+# ══════════════════════════════════════════════════════════════════════════════
+# detector:
+#   device:       "0"       # CUDA GPU 0
+#   skip_frames:  1         # TensorRT 夠快，不需跳幀
+#
+# models:
+#   person:     "models/fall_detection/yolo12l.engine"     # TensorRT
+#   luggage:    "models/luggage/yolo_luggage_best.engine"  # TensorRT
+#   # fire_smoke 等模型取得後一併 export
+#
+# output:
+#   save_video_rtsp: true   # 部署環境建議留存 RTSP 錄影
+#   mosaic_fps:      30     # skip_frames=1 → source_fps(30) ÷ 1 = 30
+#
+# features:
+#   fall_detector:
+#     pose_fallback:
+#       device: "0"         # RTMO 也用 CUDA（效能允許時才開 enabled: true）
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Mac M1/M2（開發機）
+# cameras.yaml 預設值即為 Mac 設定，通常不需要覆蓋
+# ══════════════════════════════════════════════════════════════════════════════
+# detector:
+#   device:      "mps"
+#   skip_frames: 2
+#
+# output:
+#   mosaic_fps:  15         # skip_frames=2 → source_fps(30) ÷ 2 = 15
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Ubuntu x86（無 MPS/CUDA 的測試機）
+# ══════════════════════════════════════════════════════════════════════════════
+# detector:
+#   device:      "cpu"
+#   skip_frames: 4          # CPU 較慢，多跳幀
+#   imgsz:       640        # 強制低解析度節省時間
+#
+# output:
+#   save_video_local: false # CPU 測試不存影片
+#   save_mosaic:      false
+#   mosaic_fps:       8     # skip_frames=4 → 30 ÷ 4 ≈ 8

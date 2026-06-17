@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 from rtmlib import Body
-from src.detection.fall_detector import FallDetector
 
 # COCO-17 keypoint indices
 _NOSE                    = 0
@@ -30,9 +29,14 @@ class PoseDetector:
         self.kp_conf = kp_conf
         self.min_kp = min_kp
         # 肩-髖向量與垂直方向夾角超過此值 → 橫倒
-        self._fall_cos = np.cos(np.radians(90 - fall_angle_deg))
+        # cos(fall_angle_deg)：夾角 θ > fall_angle_deg 時 cos(θ) < cos(fall_angle_deg)
+        self._fall_cos = np.cos(np.radians(fall_angle_deg))
         self._clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        self._gamma_lut = FallDetector._build_gamma_lut(gamma) if gamma != 1.0 else None
+        self._gamma_lut = self._build_gamma_lut(gamma) if gamma != 1.0 else None
+
+    @staticmethod
+    def _build_gamma_lut(gamma: float) -> np.ndarray:
+        return np.array([(i / 255.0) ** gamma * 255 for i in range(256)], dtype=np.uint8)
 
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:
         if self._gamma_lut is not None:
@@ -43,7 +47,7 @@ class PoseDetector:
         return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
 
     def detect(self, frame: np.ndarray) -> list[dict]:
-        """掃描全幀，回傳與 FallDetector.detect() 相同格式的 list。"""
+        """掃描全幀，回傳與 fall_detector.detect() 相同格式的 list。"""
         keypoints, scores = self.body(self._preprocess(frame))   # (N,17,2), (N,17)
         detections = []
         for kps, scs in zip(keypoints, scores):
