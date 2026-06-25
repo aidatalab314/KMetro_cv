@@ -7,18 +7,21 @@
 ## 安裝
 
 ```bash
-conda create -n kmetro python=3.10 -y
-conda activate kmetro
+cd KMetro_cv
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+> Ubuntu CUDA 用戶需先安裝 PyTorch cu128 build，詳見 [`docs/INSTALL_UBUNTU.md`](docs/INSTALL_UBUNTU.md)。
 
 ---
 
 ## 快速啟動
 
 ```bash
-conda activate kmetro
 cd KMetro_cv
+source .venv/bin/activate
 
 # auto 模式（預設）：探測 RTSP 是否可達，可達用攝影機，否則用本地影片
 python src/pipeline/multistream.py

@@ -11,10 +11,10 @@
 2. [NVIDIA 驅動程式](#2-nvidia-驅動程式)
 3. [CUDA Toolkit 12.8](#3-cuda-toolkit-128)
 4. [cuDNN 9](#4-cudnn-9)
-5. [TensorRT 10](#5-tensorrt-10)
-6. [GStreamer（RTSP 解碼）](#6-gstreamer)
-7. [Conda 環境與 Python 套件](#7-conda-環境與-python-套件)
-8. [OpenCV 驗證（GStreamer + CUDA）](#8-opencv-驗證)
+5. [GStreamer（RTSP 解碼）](#5-gstreamer)
+6. [Python 環境（venv）](#6-python-環境venv)
+7. [OpenCV 驗證](#7-opencv-驗證)
+8. [專案取得（git clone + LFS）](#8-專案取得)
 9. [TensorRT 模型匯出](#9-tensorrt-模型匯出)
 10. [cameras.local.yaml 設定](#10-cameraslocal-yaml)
 11. [完整驗證清單](#11-完整驗證清單)
@@ -43,16 +43,14 @@ lspci | grep -i nvidia
 RTX 5060（Blackwell）需要 **Driver 570+** 且必須使用 **open kernel module**。
 
 ```bash
-# 更新套件清單
 sudo apt update
 
 # 自動安裝建議版本（open kernel module 版）
 sudo ubuntu-drivers install --gpgpu nvidia:570-open
 
 # 或手動指定
-sudo apt install -y nvidia-driver-570-open
+# sudo apt install -y nvidia-driver-570-open
 
-# 重開機
 sudo reboot
 ```
 
@@ -75,10 +73,10 @@ wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt update
 
-# 安裝 CUDA Toolkit 12.8
+# 安裝 CUDA Toolkit 12.8（不含驅動，驅動已在第 2 步安裝）
 sudo apt install -y cuda-toolkit-12-8
 
-# 設定環境變數（加入 ~/.bashrc 或 ~/.zshrc）
+# 設定環境變數
 echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc
 echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
@@ -88,15 +86,12 @@ nvcc --version
 # nvcc: release 12.8
 ```
 
-> **注意**：`cuda-12-8` 套件僅安裝 toolkit，不含驅動。若要 toolkit + 驅動一次安裝：
-> `sudo apt install -y cuda-12-8`（包含驅動）但需確認版本不衝突。
-
 ---
 
 ## 4. cuDNN 9
 
 ```bash
-# 使用第 3 步加入的 CUDA repo（已含 cuDNN）
+# 使用第 3 步已加入的 CUDA repo
 sudo apt install -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12
 
 # 確認
@@ -105,26 +100,10 @@ dpkg -l | grep cudnn
 
 ---
 
-## 5. TensorRT 10
-
-> **重要**：Ubuntu x86 使用 pip 安裝 TensorRT，**不是** Jetson 的 `tensorrt` deb 套件。
-
-```bash
-# 在 conda env 外先確認系統 pip 路徑，或在 kmetro env 內安裝（建議後者，見第 7 節）
-
-# TensorRT 10.x（需 CUDA 12.8）
-pip install tensorrt tensorrt-cu12-bindings tensorrt-cu12-libs
-
-# 確認
-python -c "import tensorrt; print('TensorRT', tensorrt.__version__)"
-```
-
----
-
-## 6. GStreamer
+## 5. GStreamer
 
 本專案 RTSP 使用 GStreamer，H.264/H.265 由 URL 自動判斷（`rtsp_reader.py`）。
-Ubuntu x86 使用軟體解碼（`avdec_h264` / `avdec_h265`），GPU 資源留給推論。
+Ubuntu x86 使用軟體解碼（`avdec_h264` / `avdec_h265`），GPU 資源保留給推論。
 
 ```bash
 sudo apt install -y \
@@ -138,113 +117,154 @@ sudo apt install -y \
   libgstreamer-plugins-base1.0-dev
 ```
 
-驗證：
+驗證（需替換為實際 RTSP 位址）：
 
 ```bash
-# H.264 測試（需替換為實際 RTSP 位址）
+# H.264
 gst-launch-1.0 rtspsrc location="rtsp://user:pass@ip/stream" latency=0 ! \
-  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
+  rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! fakesink
 
-# H.265 測試
+# H.265
 gst-launch-1.0 rtspsrc location="rtsp://user:pass@ip/stream" latency=0 ! \
-  rtph265depay ! h265parse ! avdec_h265 ! videoconvert ! autovideosink
+  rtph265depay ! h265parse ! avdec_h265 ! videoconvert ! fakesink
 ```
 
 ---
 
-## 7. Conda 環境與 Python 套件
+## 6. Python 環境（venv）
 
-### 7.1 安裝 Miniconda
+Ubuntu 24.04 內建 Python 3.12，與本專案相容（本專案最低需求 Python 3.10+）。
+
+### 6.1 系統套件
 
 ```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
-~/miniconda3/bin/conda init bash   # 或 zsh
-source ~/.bashrc
+sudo apt install -y python3-venv python3-dev python3-pip
 ```
 
-### 7.2 建立環境
+### 6.2 建立 venv
 
 ```bash
-conda create -n kmetro python=3.10 -y
-conda activate kmetro
+cd ~/KMetro_cv
+
+# 建立 .venv（已在 .gitignore 排除）
+python3 -m venv .venv
+
+# 啟動（後續所有 pip / python 指令都在啟動後執行）
+source .venv/bin/activate
+
+# 確認 Python 版本
+python --version
+# Python 3.12.x
 ```
 
-### 7.3 PyTorch（CUDA 12.8）
+> **每次開新 terminal 都需要執行** `source ~/KMetro_cv/.venv/bin/activate`
+> 建議加入 alias：`echo "alias kmetro='source ~/KMetro_cv/.venv/bin/activate'" >> ~/.bashrc`
+
+### 6.3 PyTorch（CUDA 12.8）
 
 ```bash
-# PyTorch cu128 build
+# cu128 專用 build（務必使用此 index-url，不可用預設 PyPI）
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 # 確認 CUDA 可用
-python -c "import torch; print('CUDA:', torch.cuda.is_available(), torch.version.cuda)"
-# 預期: CUDA: True  12.8
+python -c "import torch; print('CUDA:', torch.cuda.is_available(), '| CUDA ver:', torch.version.cuda, '| GPU:', torch.cuda.get_device_name(0))"
+# 預期: CUDA: True | CUDA ver: 12.8 | GPU: NVIDIA GeForce RTX 5060
 ```
 
-### 7.4 TensorRT（環境內安裝）
+### 6.4 TensorRT 10
 
 ```bash
+# TensorRT Python bindings（需 CUDA 12.8）
 pip install tensorrt tensorrt-cu12-bindings tensorrt-cu12-libs
+
+# 確認
+python -c "import tensorrt; print('TensorRT:', tensorrt.__version__)"
 ```
 
-### 7.5 Ultralytics 與其他依賴
+### 6.5 專案依賴
 
 ```bash
-pip install ultralytics[export]   # 含 onnx, onnxruntime 等 export 工具
+# 安裝 requirements.txt（含 ultralytics, opencv, rtmlib 等）
+pip install -r requirements.txt
 
-# 其他專案依賴
-pip install \
-  opencv-python \        # 含 GStreamer 支援
-  cvzone \
-  rtmlib \
-  pyyaml \
-  numpy
+# ultralytics export 工具（TensorRT engine 匯出需要）
+pip install "ultralytics[export]"
 ```
 
-### 7.6 驗證整合
+### 6.6 驗證整合
 
 ```bash
-python - <<'EOF'
-import torch, cv2, ultralytics
-print("PyTorch:", torch.__version__)
-print("CUDA:", torch.cuda.is_available(), "| GPU:", torch.cuda.get_device_name(0))
-print("OpenCV:", cv2.__version__, "| GStreamer:", cv2.getBuildInformation().split("GStreamer:")[1].split("\n")[0].strip())
-print("Ultralytics:", ultralytics.__version__)
-EOF
+python -c "
+import torch, cv2, ultralytics, tensorrt
+print('PyTorch   :', torch.__version__)
+print('CUDA      :', torch.cuda.is_available(), '|', torch.version.cuda)
+print('GPU       :', torch.cuda.get_device_name(0))
+gst = cv2.getBuildInformation().split('GStreamer:')[1].split('\n')[0].strip()
+print('OpenCV    :', cv2.__version__, '| GStreamer:', gst)
+print('Ultralytics:', ultralytics.__version__)
+print('TensorRT  :', tensorrt.__version__)
+"
 ```
 
 ---
 
-## 8. OpenCV 驗證
+## 7. OpenCV 驗證
 
-`pip install opencv-python` 在 Linux 上通常已含 GStreamer。驗證：
+`pip install opencv-python` 在 Linux 上通常已含 GStreamer。若結果為 NO：
 
 ```bash
 python -c "
 import cv2
 info = cv2.getBuildInformation()
 print('GStreamer:', 'YES' if 'GStreamer: YES' in info else 'NO')
-print('CUDA:', 'YES' if 'CUDA: YES' in info else 'NO (推論用 PyTorch CUDA，此項非必要)')
 "
 ```
 
-> **說明**：OpenCV GStreamer YES → RTSP 解碼正常。OpenCV CUDA 非必要，推論已由 PyTorch / TensorRT 負責。
-> 若 GStreamer 為 NO，需從原始碼編譯 OpenCV（見附錄 A）。
+GStreamer 為 NO 時，需從原始碼編譯（見附錄 A）。
+
+---
+
+## 8. 專案取得
+
+本專案使用 **Git LFS** 儲存模型權重（`.pt`），clone 前需先安裝 git-lfs。
+
+```bash
+# 安裝 git-lfs
+sudo apt install git-lfs
+git lfs install
+
+# Clone（LFS 物件會一併下載）
+git clone https://github.com/aidatalab314/KMetro_cv.git ~/KMetro_cv
+cd ~/KMetro_cv
+
+# 確認模型已下載（不是 LFS pointer 文字檔）
+ls -lh models/fall_detection/yolo12l.pt       # 應約 51MB
+ls -lh models/luggage/yolo_luggage_best.pt    # 應約 5.2MB
+
+# 建立 venv（接續第 6 節）
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+> **若已 clone 但 .pt 是 pointer 文字（幾百 bytes）**：
+> ```bash
+> git lfs pull
+> ```
 
 ---
 
 ## 9. TensorRT 模型匯出
 
-在 Ubuntu 目標機上執行（TensorRT engine 綁定 GPU 架構，不可跨機器使用）：
+`.engine` 檔綁定 GPU 型號與 TensorRT 版本，**必須在 Ubuntu 目標機上執行**，不可從 Mac / Jetson 複製。
 
 ```bash
-conda activate kmetro
 cd ~/KMetro_cv
+source .venv/bin/activate
 
 python - <<'EOF'
 from ultralytics import YOLO
 
-# Person 偵測模型（FP16 加速）
+# Person 偵測模型（FP16 加速，1280 解析度）
 YOLO("models/fall_detection/yolo12l.pt").export(
     format="engine", device=0, half=True, imgsz=1280
 )
@@ -259,9 +279,7 @@ EOF
 ls -lh models/fall_detection/*.engine models/luggage/*.engine
 ```
 
-匯出時間：yolo12l 約 3–10 分鐘（首次需 calibration）。
-
-> **注意**：`.engine` 檔案綁定 GPU 型號與 TensorRT 版本，不可從 Mac / Jetson 複製過來。
+匯出時間：yolo12l 約 3–10 分鐘（首次 TensorRT calibration）。
 
 ---
 
@@ -271,59 +289,59 @@ ls -lh models/fall_detection/*.engine models/luggage/*.engine
 cp configs/cameras.local.yaml.example configs/cameras.local.yaml
 ```
 
-編輯 `configs/cameras.local.yaml`，填入以下 Ubuntu CUDA 設定：
+編輯 `configs/cameras.local.yaml`，填入 Ubuntu CUDA 設定：
 
 ```yaml
 # Ubuntu x86 + GeForce RTX — 覆蓋設定
 
 detector:
-  device:       "0"      # CUDA GPU 0（非 "mps"，非 "cpu"）
-  skip_frames:  1        # TensorRT 夠快，不需跳幀；若 fps 仍不足可改 2
-  imgsz:        640      # 一般場景；fall_detector 可在 features 區覆蓋 1280
+  device:       "0"      # CUDA GPU 0
+  skip_frames:  1        # TensorRT 夠快，不需跳幀；fps 不足可改 2
 
 models:
   person:     "models/fall_detection/yolo12l.engine"      # TensorRT FP16
   luggage:    "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
 
 output:
-  save_video_rtsp: true   # 部署環境建議錄影存證
-  mosaic_fps:      25     # 依 RTSP 來源 fps 調整（25fps 來源 ÷ 1 = 25）
-                          # ⚠️ 必須 = source_fps ÷ skip_frames
+  save_video_rtsp: true
+  mosaic_fps:      25    # ⚠️ = source_fps ÷ skip_frames（25fps ÷ 1 = 25）
 ```
+
+> 若 TensorRT engine 尚未匯出（第 9 步），先用 `.pt` 測試：直接不設 models 覆蓋，
+> 或設 `device: "cuda"` 讓 PyTorch 用 CUDA 推論。
 
 ---
 
 ## 11. 完整驗證清單
 
 ```bash
-conda activate kmetro
 cd ~/KMetro_cv
+source .venv/bin/activate
 
 # 1. CUDA + GPU
 python -c "import torch; assert torch.cuda.is_available(); print('GPU OK:', torch.cuda.get_device_name(0))"
 
-# 2. TensorRT engine 載入
-python -c "from ultralytics import YOLO; m=YOLO('models/fall_detection/yolo12l.engine'); print('Engine OK')"
+# 2. TensorRT engine 載入（engine 匯出後才可執行）
+python -c "from ultralytics import YOLO; YOLO('models/fall_detection/yolo12l.engine'); print('Engine OK')"
 
 # 3. RTSP 連線（替換為實際 IP）
 python -c "
 import cv2
 cap = cv2.VideoCapture('rtsp://admin:123456@192.168.6.91/stream0')
-ok, f = cap.read(); cap.release()
+ok, _ = cap.read(); cap.release()
 print('RTSP OK' if ok else 'RTSP 連線失敗')
 "
 
-# 4. 本地影片 fallback
+# 4. GStreamer RTSP（透過 rtsp_reader）
 python -c "
-import cv2
-cap = cv2.VideoCapture('data/test_videos/metro/IMG_2733.MOV')
-ok, _ = cap.read(); cap.release()
-print('Fallback video OK' if ok else '影片讀取失敗')
+from src.rtsp_reader import RTSPReader
+r = RTSPReader('rtsp://admin:123456@192.168.6.91/stream0')
+print('open:', r.open(), '| file:', r.is_file())
+r.release()
 "
 
-# 5. 全系統啟動測試（auto 模式，headless）
-python src/pipeline/multistream.py --mode op --cameras cam_platform_north &
-sleep 10 && kill %1
+# 5. 全系統啟動測試（headless，10 秒後自動停止）
+timeout 10 python src/pipeline/multistream.py --mode op --cameras cam_platform_north || true
 ```
 
 ---
@@ -331,8 +349,8 @@ sleep 10 && kill %1
 ## 12. 啟動
 
 ```bash
-conda activate kmetro
 cd ~/KMetro_cv
+source .venv/bin/activate
 
 # auto 模式（探測 RTSP，不可達則 fallback 本地影片）
 python src/pipeline/multistream.py
@@ -347,8 +365,8 @@ python src/pipeline/multistream.py --cameras cam_platform_north,cam_escalator_up
 python src/pipeline/multistream.py --source rtsp --reset-roi all
 ```
 
-> **來源失敗行為**：若 RTSP 與 fallback 影片均無法開啟，該路顯示黑畫面並標示
-> `NO SOURCE / RTSP and fallback unavailable`，不影響其他路正常運作，按 `q` 可退出。
+> **來源失敗行為**：RTSP 與 fallback 均無法開啟時，該路顯示黑畫面
+> `NO SOURCE / RTSP and fallback unavailable`，按 `q` 退出。
 
 ---
 
@@ -363,13 +381,17 @@ cd opencv && mkdir build && cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DWITH_GSTREAMER=ON \
-  -DWITH_CUDA=OFF \           # OpenCV CUDA 非必要
+  -DWITH_CUDA=OFF \
   -DBUILD_opencv_python3=ON \
   -DPYTHON_EXECUTABLE=$(which python) \
   -DINSTALL_PYTHON_EXAMPLES=OFF
 
 make -j$(nproc)
 sudo make install
+
+# 重新安裝 venv 內的 opencv（指向系統編譯版）
+pip uninstall opencv-python -y
+# 系統 site-packages 路徑需加入 venv 或改用 --system-site-packages 建立 venv
 ```
 
 ---
@@ -378,8 +400,10 @@ sudo make install
 
 | 問題 | 原因 | 解法 |
 |------|------|------|
-| `nvidia-smi` 顯示正常但 `torch.cuda.is_available()` 為 False | PyTorch 版本與 CUDA 不符 | 確認安裝 `cu128` build |
+| `nvidia-smi` 正常但 `torch.cuda.is_available()` 為 False | PyTorch 版本與 CUDA 不符 | 確認安裝 `cu128` build（`--index-url .../cu128`） |
 | TensorRT export 失敗：`sm_120 not supported` | TensorRT 版本太舊 | 升級至 TensorRT 10.x |
 | GStreamer RTSP 失敗，但 FFmpeg 可以 | `avdec_h264/h265` 未安裝 | `sudo apt install gstreamer1.0-libav` |
-| ROI 視窗開不起來（headless）| 無 X display | 加 `--mode op`（headless）或設定 `DISPLAY` |
-| `nvv4l2decoder` 錯誤訊息 | Jetson 專屬，Ubuntu 正常現象 | 可無視，程式自動 fallback 到 avdec |
+| `nvv4l2decoder` 錯誤訊息出現 | Jetson 專屬元件，Ubuntu 正常觸發 | 可忽略，程式自動 fallback 到 avdec |
+| `.pt` 只有幾百 bytes | git-lfs 未啟用就 clone | `git lfs install && git lfs pull` |
+| `pip install` 後 `import` 失敗 | venv 未啟動 | `source ~/KMetro_cv/.venv/bin/activate` |
+| ROI 視窗無法顯示（headless server）| 無 X display | 加 `--mode op` 改用 headless |
