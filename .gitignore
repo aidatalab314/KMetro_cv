@@ -19,10 +19,8 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 
-# Model weights (large files) — .gitkeep 保留目錄結構
-models/luggage/*.pt
+# Model weights — .engine 是 TensorRT 產物（綁定硬體，不進版控）
 models/luggage/*.engine
-models/fall_detection/*.pt
 models/fall_detection/*.engine
 
 # Test videos (large files) — .gitkeep 保留目錄結構
