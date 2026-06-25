@@ -23,20 +23,33 @@ def _resolve_source(src):
     return int(src) if str(src).isdigit() else src
 
 
+def _guess_codec(rtsp_url: str) -> str:
+    """從 URL 關鍵字推測串流 codec（h264 / h265）。"""
+    low = rtsp_url.lower()
+    if any(k in low for k in ("h264", "264", "avc")):
+        return "h264"
+    return "h265"   # 預設 H.265（IP cam 較常見）
+
+
 def _build_gst_rtsp_pipeline(rtsp_url: str, hw_accel: bool = True) -> str:
+    codec  = _guess_codec(rtsp_url)
+    depay  = "rtph264depay" if codec == "h264" else "rtph265depay"
+    parse  = "h264parse"    if codec == "h264" else "h265parse"
+
     if hw_accel:
-        # Jetson：nvv4l2decoder H.265 硬體解碼
+        # Jetson：nvv4l2decoder 硬體解碼（H.264 / H.265 均支援）
         return (
             f"rtspsrc location={rtsp_url} latency=0 ! "
-            "rtph265depay ! h265parse ! nvv4l2decoder ! "
+            f"{depay} ! {parse} ! nvv4l2decoder ! "
             "nvvidconv ! video/x-raw,format=BGRx ! "
             "videoconvert ! video/x-raw,format=BGR ! "
             "appsink drop=true max-buffers=1 sync=false"
         )
-    # Ubuntu x86 / 非 Jetson：avdec_h265 軟體解碼
+    # Ubuntu x86 / 非 Jetson：avdec 軟體解碼
+    avdec = "avdec_h264" if codec == "h264" else "avdec_h265"
     return (
         f"rtspsrc location={rtsp_url} latency=0 ! "
-        "rtph265depay ! h265parse ! avdec_h265 ! "
+        f"{depay} ! {parse} ! {avdec} ! "
         "videoconvert ! video/x-raw,format=BGR ! "
         "appsink drop=true max-buffers=1 sync=false"
     )
@@ -46,9 +59,10 @@ class RTSPReader:
     """
     影像來源讀取器。
     RTSP 來源依序嘗試：
-      1. GStreamer HW（Jetson nvv4l2decoder）
-      2. GStreamer SW（Ubuntu x86 avdec_h265）
-      3. FFmpeg（Mac / 無 GStreamer 環境）
+      1. GStreamer HW（Jetson nvv4l2decoder，H.264/H.265 自動偵測）
+      2. GStreamer SW（avdec_h264 / avdec_h265，需 gstreamer1.0-libav）
+      3. FFmpeg（Mac / Ubuntu 無 GStreamer 環境）
+    codec 由 URL 關鍵字自動推測（含 h264/264/avc → H.264，否則 H.265）。
     本地檔案 / webcam 直接使用 cv2.VideoCapture 預設 backend。
     """
 

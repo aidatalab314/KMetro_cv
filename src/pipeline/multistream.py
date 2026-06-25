@@ -207,6 +207,23 @@ def _make_waiting_panel(cam_name: str, panel_h: int) -> np.ndarray:
     return panel
 
 
+def _make_nosource_panel(cam_name: str, panel_h: int) -> np.ndarray:
+    """RTSP 與 fallback 均無法開啟時的黑畫面 panel。"""
+    pw = int(panel_h * 16 / 9)
+    panel = np.zeros((panel_h, pw, 3), np.uint8)
+    cv2.rectangle(panel, (0, 0), (pw, _ALERT_H), (30, 10, 10), -1)
+    cv2.putText(panel, cam_name, (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.60, (80, 50, 50), 1)
+    cy = panel_h // 2
+    cv2.putText(panel, "NO SOURCE",
+                (pw // 2 - 70, cy - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.90, (60, 40, 40), 2)
+    cv2.putText(panel, "RTSP and fallback unavailable",
+                (pw // 2 - 130, cy + 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (50, 35, 35), 1)
+    return panel
+
+
 # ── Mosaic 工具 ───────────────────────────────────────────────────────────────
 
 def build_mosaic(panels: list[np.ndarray]) -> np.ndarray:
@@ -371,8 +388,10 @@ def main():
                 if cid in last_frames:
                     frame, _ = last_frames[cid]
                     panels.append(make_panel(frame, wk, panel_h))
+                elif wk.source_failed:
+                    panels.append(_make_nosource_panel(cid, panel_h))
                 else:
-                    panels.append(_make_waiting_panel(cid, panel_h))  # cid is ASCII-safe
+                    panels.append(_make_waiting_panel(cid, panel_h))
 
             mosaic = build_mosaic(panels)
 
@@ -398,7 +417,10 @@ def main():
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord('q')):
                 break
-            if not any(w.is_alive() for w in workers):
+            # 若所有 worker 都結束且沒有任何來源失敗（影片播完），才自動退出
+            # 有 source_failed 的 worker：保持顯示 NO SOURCE 黑畫面，等使用者按 q
+            if (not any(w.is_alive() for w in workers) and
+                    not any(w.source_failed for w in workers)):
                 log("INFO", "所有 worker 已結束")
                 break
 

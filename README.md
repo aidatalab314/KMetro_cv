@@ -50,4 +50,5 @@ python src/pipeline/multistream.py --reset-roi all
 | [`docs/FEATURES.md`](docs/FEATURES.md) | 6 大功能演算法、ROI 設定操作指南 |
 | [`docs/CONFIG.md`](docs/CONFIG.md) | cameras.yaml 完整說明、平台設定 |
 | [`docs/STATUS.md`](docs/STATUS.md) | 現況、已知 Bug、待討論議題、下一步 |
+| [`docs/INSTALL_UBUNTU.md`](docs/INSTALL_UBUNTU.md) | Ubuntu 24.04 + GeForce RTX 完整安裝指南 |
 | [`docs/TECH_EVALUATION.md`](docs/TECH_EVALUATION.md) | 技術選型評估（歷史存檔） |

@@ -38,7 +38,27 @@
 #   mosaic_fps:  15         # skip_frames=2 → source_fps(30) ÷ 2 = 15
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Ubuntu x86（無 MPS/CUDA 的測試機）
+# Ubuntu 24.04 + GeForce RTX（CUDA，TensorRT）
+# ══════════════════════════════════════════════════════════════════════════════
+# detector:
+#   device:      "0"        # CUDA GPU 0
+#   skip_frames: 1          # TensorRT 夠快不需跳幀；不足可改 2
+#
+# models:
+#   person:     "models/fall_detection/yolo12l.engine"    # TensorRT FP16
+#   luggage:    "models/luggage/yolo_luggage_best.engine" # TensorRT FP16
+#
+# output:
+#   save_video_rtsp: true   # 部署環境建議錄影存證
+#   mosaic_fps:      25     # 依 RTSP 來源 fps ÷ skip_frames（25fps ÷ 1 = 25）
+#
+# features:
+#   fall_detector:
+#     pose_fallback:
+#       device: "0"         # RTMO 也用 CUDA（效能允許時才開 enabled: true）
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Ubuntu x86（無 GPU 的純 CPU 測試機）
 # ══════════════════════════════════════════════════════════════════════════════
 # detector:
 #   device:      "cpu"

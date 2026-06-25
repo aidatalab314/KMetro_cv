@@ -163,7 +163,8 @@ class CameraWorker(threading.Thread):
         self._save_video_rtsp  = out_cfg.get("save_video_rtsp", False)
 
         # ── 狀態（供 multistream display thread 讀取，不需加鎖）────────────
-        self.fps:   float = 0.0
+        self.fps:          float = 0.0
+        self.source_failed: bool = False                  # RTSP + fallback 均失敗
         self._last_annotated: np.ndarray | None = None   # skip-frame cache
         # 最近 5 筆告警，deque 在 CPython append 操作是 thread-safe
         self.recent_alerts: deque = deque(maxlen=5)
@@ -182,6 +183,7 @@ class CameraWorker(threading.Thread):
     def run(self):
         if not self._reader.open():
             log("ERROR", f"[{self.camera_id}] 無法開啟影像來源，worker 結束")
+            self.source_failed = True
             return
 
         w, h    = self._reader.get_size()

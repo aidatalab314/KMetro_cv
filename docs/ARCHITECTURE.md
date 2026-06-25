@@ -5,6 +5,7 @@
 | 角色 | 機器 | 用途 |
 |------|------|------|
 | 開發機 | Apple M1 Mac mini（16GB） | 演算法開發、本地影片測試 |
+| 測試機 | Ubuntu 24.04 + GeForce RTX 5060 | RTSP 整合測試、TensorRT 驗證 |
 | 部署機 | Jetson Orin | 現場 RTSP 推論，TensorRT 加速 |
 
 ---
@@ -114,7 +115,11 @@ RTSPReader.read()  →  [clean frame（未標注）]
 | 平台 | RTSP 解碼 | 模型推論 | skip_frames |
 |------|-----------|----------|-------------|
 | Mac M1 | FFmpeg（cv2 預設） | PyTorch MPS | 2 |
-| Jetson Orin | GStreamer nvv4l2decoder（H.265 HW） | TensorRT `.engine` | 1 |
+| Ubuntu x86 + GeForce RTX | GStreamer avdec SW → FFmpeg fallback | TensorRT `.engine`（FP16） | 1 |
+| Jetson Orin | GStreamer nvv4l2decoder HW（H.264/H.265） | TensorRT `.engine` | 1 |
+
+> Ubuntu x86 RTSP 解碼：`nvv4l2decoder` 是 Jetson 專屬，Ubuntu 使用 `avdec_h264`/`avdec_h265`
+> 軟體解碼，或 cv2 FFmpeg fallback。GPU 資源保留給 TensorRT 推論。
 
 Jetson TensorRT 轉換：
 
