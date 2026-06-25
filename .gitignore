@@ -19,15 +19,19 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 
-# Model weights (large files)
+# Model weights (large files) — .gitkeep 保留目錄結構
 models/luggage/*.pt
+models/luggage/*.engine
 models/fall_detection/*.pt
+models/fall_detection/*.engine
 
-# Test videos (large files)
-data/test_videos/
+# Test videos (large files) — .gitkeep 保留目錄結構
+data/test_videos/*
+!data/test_videos/.gitkeep
 
-# Output videos
-outputs/videos/*.mp4
+# Output videos — .gitkeep 保留目錄結構
+outputs/videos/*
+!outputs/videos/.gitkeep
 
 # Reference material
 ref/
@@ -35,10 +39,11 @@ ref/
 # Local config overrides (platform-specific, not versioned)
 configs/cameras.local.yaml
 
-# Event output (auto-generated)
-data/snapshots/
-data/logs/
+# Event output (auto-generated) — .gitkeep 保留目錄結構
+data/snapshots/*
+!data/snapshots/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
 
 # Logs
-logs/
 *.log
