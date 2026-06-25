@@ -1,248 +1,41 @@
 {
-  "cam_platform_north": [
-    {
-      "id": "roi_0",
-      "label": "Full Frame",
-      "features": [
-        "fire_smoke"
-      ],
-      "color": [
-        255,
-        80,
-        0
-      ],
-      "full_frame": true,
-      "points": [
-        [
-          0,
-          0
-        ],
-        [
-          1920,
-          0
-        ],
-        [
-          1920,
-          1080
-        ],
-        [
-          0,
-          1080
-        ]
-      ]
-    },
-    {
-      "id": "roi_1",
-      "label": "ROI 1",
-      "features": [
-        "fall_detector",
-        "luggage_roll"
-      ],
-      "color": [
-        0,
-        165,
-        255
-      ],
-      "points": [
-        [
-          721,
-          739
-        ],
-        [
-          1018,
-          925
-        ],
-        [
-          1125,
-          816
-        ],
-        [
-          1132,
-          721
-        ],
-        [
-          1249,
-          616
-        ],
-        [
-          1498,
-          153
-        ],
-        [
-          1273,
-          142
-        ],
-        [
-          988,
-          528
-        ],
-        [
-          841,
-          598
-        ],
-        [
-          841,
-          672
-        ]
-      ]
-    }
-  ],
-  "cam_escalator_up": [
+  "cam_platform_north_rtsp": [
     {
       "id": "roi_0",
       "label": "ROI 0",
       "features": [
-        "size_classifier"
-      ],
-      "color": [
-        0,
-        255,
-        0
-      ],
-      "points": [
-        [
-          532,
-          840
-        ],
-        [
-          912,
-          1039
-        ],
-        [
-          1096,
-          795
-        ],
-        [
-          774,
-          678
-        ]
-      ]
-    },
-    {
-      "id": "roi_1",
-      "label": "Full Frame",
-      "features": [
-        "fire_smoke"
-      ],
-      "color": [
-        255,
-        80,
-        0
-      ],
-      "full_frame": true,
-      "points": [
-        [
-          0,
-          0
-        ],
-        [
-          1920,
-          0
-        ],
-        [
-          1920,
-          1080
-        ],
-        [
-          0,
-          1080
-        ]
-      ]
-    }
-  ],
-  "cam_escalator_down": [
-    {
-      "id": "roi_0",
-      "label": "ROI 0",
-      "features": [
-        "dwell_monitor"
-      ],
-      "color": [
-        0,
-        255,
-        255
-      ],
-      "points": [
-        [
-          1219,
-          559
-        ],
-        [
-          1114,
-          643
-        ],
-        [
-          1738,
-          894
-        ],
-        [
-          1780,
-          729
-        ]
-      ]
-    },
-    {
-      "id": "roi_1",
-      "label": "Full Frame",
-      "features": [
-        "fire_smoke"
-      ],
-      "color": [
-        255,
-        80,
-        0
-      ],
-      "full_frame": true,
-      "points": [
-        [
-          0,
-          0
-        ],
-        [
-          1920,
-          0
-        ],
-        [
-          1920,
-          1080
-        ],
-        [
-          0,
-          1080
-        ]
-      ]
-    }
-  ],
-  "cam_elevator_lobby": [
-    {
-      "id": "roi_0",
-      "label": "Full Frame",
-      "features": [
+        "dwell_monitor",
         "zone_counter",
+        "fall_detector",
+        "luggage_roll",
+        "size_classifier",
         "fire_smoke"
       ],
       "color": [
-        255,
-        0,
-        255
+        200,
+        200,
+        200
       ],
-      "full_frame": true,
       "points": [
         [
-          0,
-          0
+          862,
+          415
         ],
         [
-          1920,
-          0
+          502,
+          651
         ],
         [
-          1920,
-          1080
+          1239,
+          900
         ],
         [
-          0,
-          1080
+          1399,
+          523
+        ],
+        [
+          1035,
+          378
         ]
       ]
     }

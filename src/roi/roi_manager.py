@@ -127,10 +127,11 @@ def _select_features(win: str, display_frame: np.ndarray,
 
 # ── Interactive ROI drawing tool ──────────────────────────────────────────────
 
-def draw_roi_interactive(video_path: str,
-                          enabled_features: list[str] | None = None) -> list[dict]:
+def draw_roi_interactive(source: str,
+                          enabled_features: list[str] | None = None,
+                          title: str | None = None) -> list[dict]:
     """
-    Open interactive ROI drawing on the first frame of video_path.
+    Open interactive ROI drawing on a frame from source (file path or RTSP URL).
 
     Controls:
       Left-click     add vertex
@@ -141,15 +142,23 @@ def draw_roi_interactive(video_path: str,
 
     Each ROI stores a list of features in the "features" key.
     """
-    cap = cv2.VideoCapture(video_path)
-    ret, original = cap.read()
+    is_rtsp = source.startswith("rtsp://") or source.startswith("rtmp://")
+    cap = cv2.VideoCapture(source)
+    original = None
+    # RTSP：跳過開頭幾幀（緩衝區不穩），取第一幀穩定畫面
+    n_warmup = 8 if is_rtsp else 0
+    for _ in range(n_warmup + 1):
+        ret, frame = cap.read()
+        if ret:
+            original = frame
     cap.release()
-    if not ret:
-        raise RuntimeError(f"Cannot read first frame: {video_path}")
+    if original is None:
+        raise RuntimeError(f"Cannot read frame: {source}")
 
     H, W  = original.shape[:2]
     scale = min(1.0, 1280 / W)
-    win   = f"ROI Setup  [{Path(video_path).name}]"
+    default_title = source if is_rtsp else Path(source).name
+    win   = f"ROI Setup  [{title or default_title}]"
 
     state: dict = {"pts": [], "rois": []}
 

@@ -1,6 +1,6 @@
 # KMetro CV — 專案現況
 
-> 最後更新：2026-06-17
+> 最後更新：2026-06-23
 
 ---
 
@@ -24,6 +24,10 @@
 | 4路 multistream pipeline | ✓ | `multistream.py` + `camera_worker.py` |
 | ByteTrack 整合 | ✓ | FallDetector + LuggageDetector tracking=True |
 | ROI Manager（多邊形 + 全畫面） | ✓ | `[F]` 鍵設全畫面，已更新 roi_records 格式 |
+| ROI 雙軌 key（RTSP / Local 各自獨立） | ✓ | `camera_id_rtsp` / `camera_id_local`，不互蓋 |
+| RTSP 自動探測（`--source auto`） | ✓ | 探測可達 → 攝影機；不可達 → 本地 fallback |
+| ROI 選單顯示全部功能 | ✓ | 不再依 camera 啟用功能過濾選單 |
+| 全攝影機啟用全功能 | ✓ | 4 台均開 dwell/zone/fall/luggage/size/fire |
 | GStreamer RTSP reader | ✓ | HW/SW fallback，port from csas_poc |
 | EventManager（log + snapshot） | ✓ | hook 預留 no-op |
 | Per-camera 影片輸出 | ✓ | |
@@ -36,8 +40,8 @@
 
 | 編號 | 檔案 | 說明 | 嚴重度 | 狀態 |
 |------|------|------|--------|------|
-| B1 | `pose_detector.py:33` | `_fall_cos` 計算錯誤：`cos(90-angle)` 應為 `cos(angle)`，實際門檻比設定少 10° | High | ⏳ 待修 |
-| B2 | `run_inference.py:117` | ROI overlay 在 YOLO 推論前繪製，影響模型輸入 | Medium | ⏳ 僅影響舊版，新架構已無此問題 |
+| B1 | `pose_detector.py:33` | `_fall_cos` 計算：已確認使用 `cos(angle)`，無誤 | High | ✓ 已確認正確 |
+| B2 | `run_inference.py:117` | ROI overlay 在 YOLO 推論前繪製，影響模型輸入 | Medium | ✓ 新架構 camera_worker 已修正，舊版保留不維護 |
 | B4 | `pose_detector.py:4` | 引入 FallDetector 只為借用 `_build_gamma_lut`，耦合不當 | Low | ⏳ |
 | B5 | `luggage_detector.py` | `_nearest_person` 不排除 `fallen=True` 的人，bbox 異常影響面積計算 | Low | ⏳ |
 
@@ -110,9 +114,9 @@
 
 ## 下一步（優先順序）
 
-1. **修 B1**：`pose_detector.py:33` 角度計算錯誤（一行修改，高優先）
-2. **取得 fire_smoke 模型**，完成功能2
-3. **整合 escalator_angle_deg**（D2），提升電扶梯跌倒精度
+1. **端對端測試**：以 2 路真實攝影機跑 RTSP 模式，確認 ROI 設定、偵測結果、告警觸發
+2. **整合 escalator_angle_deg**（D2）：`camera_worker` 讀取後傳給 FallDetector，補正電扶梯傾斜誤判
+3. **取得 fire_smoke 模型**，完成功能2
 4. **Jetson TensorRT 部署驗證**：export `.engine` + 效能測試
 5. **決定 Re-ID 策略**（D1），視業務需求決定是否升級 BoT-SORT
 6. **EventManager hook 實作**：喇叭告警 / API 推播

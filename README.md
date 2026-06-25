@@ -20,16 +20,22 @@ pip install -r requirements.txt
 conda activate kmetro
 cd KMetro_cv
 
-# Dev 模式（本地影片 + 顯示視窗）
+# auto 模式（預設）：探測 RTSP 是否可達，可達用攝影機，否則用本地影片
 python src/pipeline/multistream.py
 
-# Op 模式（headless，接 RTSP）
+# 強制 RTSP
+python src/pipeline/multistream.py --source rtsp
+
+# 強制本地影片
+python src/pipeline/multistream.py --source local
+
+# Op 模式（headless）
 python src/pipeline/multistream.py --mode op
 
 # 指定攝影機
 python src/pipeline/multistream.py --cameras cam_platform_north,cam_escalator_up
 
-# 強制重繪 ROI
+# 強制重繪 ROI（ROI 紀錄以 camera_id_rtsp / camera_id_local 分開儲存）
 python src/pipeline/multistream.py --reset-roi cam_platform_north
 python src/pipeline/multistream.py --reset-roi all
 ```

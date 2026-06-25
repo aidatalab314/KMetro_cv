@@ -9,6 +9,8 @@ configs/
 ├── cameras.local.yaml.example# 平台設定範本
 ├── model_config.yaml         # 舊版單影片模式設定（保留）
 └── roi_records.json          # ROI 座標紀錄（自動寫入）
+                              # key 格式：{camera_id}_rtsp / {camera_id}_local
+                              # RTSP 與本地影片各自獨立，互不覆蓋
 ```
 
 `utils.load_yaml()` 會自動合併 `cameras.yaml` 和 `cameras.local.yaml`（後者覆蓋前者）。
@@ -170,12 +172,34 @@ models:
 
 ---
 
+## --source 參數行為
+
+| `--source` | 行為 | ROI key 後綴 |
+|------------|------|-------------|
+| `auto`（預設） | 每台攝影機探測 RTSP（6s timeout）；可達 → 攝影機，不可達 → fallback 本地影片 | 依實際使用來源決定（`_rtsp` 或 `_local`） |
+| `rtsp` | 強制使用 RTSP | `_rtsp` |
+| `local` | 強制使用 fallback 本地影片 | `_local` |
+
+## ROI 紀錄 key 格式
+
+每台攝影機的 ROI 以 `{camera_id}_{source_type}` 為 key 寫入 `roi_records.json`，RTSP 與本地影片各自儲存，切換來源不覆蓋對方：
+
+```json
+{
+  "cam_platform_north_rtsp":  [...],   // --source rtsp 時使用
+  "cam_platform_north_local": [...],   // --source local 時使用
+  "cam_escalator_up_rtsp":    [...]
+}
+```
+
+首次以某模式啟動時，若對應 key 不存在，系統自動開啟互動式 ROI 繪製視窗。
+
 ## Dev / Op 模式對照
 
 | 項目 | Dev | Op |
 |------|-----|----|
 | 顯示視窗 | ✓ split-screen mosaic | ✗ headless |
-| 預設影像來源 | 本地 fallback 影片 | RTSP |
+| 預設影像來源（`auto`） | 探測 RTSP，不可達則本地影片 | 探測 RTSP，不可達則本地影片 |
 | 本地影片 → 存影片 | 強制 | 強制 |
 | RTSP → 存影片 | 依 `save_video_rtsp` | 依設定 |
 | Mosaic 錄影 | Display loop 直接寫 | 獨立 `_MosaicOpThread` |

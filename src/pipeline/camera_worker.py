@@ -34,7 +34,8 @@ from src.features.luggage_roll_monitor import LuggageRollMonitor
 class CameraWorker(threading.Thread):
 
     def __init__(self, cam_cfg: dict, global_cfg: dict, source,
-                 mode: str, records_path: str, frame_queue: queue.Queue):
+                 mode: str, records_path: str, frame_queue: queue.Queue,
+                 roi_key: str | None = None):
         super().__init__(daemon=True, name=f"worker-{cam_cfg['id']}")
 
         self.camera_id   = cam_cfg["id"]
@@ -53,7 +54,7 @@ class CameraWorker(threading.Thread):
         self._reader = RTSPReader(source, fallback=cam_cfg.get("fallback"))
 
         # ── ROI ──────────────────────────────────────────────────────────────
-        self._roi = ROIManager(self.camera_id, records_path)
+        self._roi = ROIManager(roi_key or self.camera_id, records_path)
 
         # ── 事件管理 ─────────────────────────────────────────────────────────
         self._events = EventManager(

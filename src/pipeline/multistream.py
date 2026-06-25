@@ -17,8 +17,9 @@ KMetro CV — 多路攝影機主入口
   └──────────────────────────────────┘
 
 用法：
-    python src/pipeline/multistream.py                            # dev 模式，本地影片
-    python src/pipeline/multistream.py --source rtsp             # dev 模式，RTSP
+    python src/pipeline/multistream.py                            # auto：探測 RTSP，不可達則本地影片
+    python src/pipeline/multistream.py --source rtsp             # 強制 RTSP（ROI key = camera_id）
+    python src/pipeline/multistream.py --source local            # 強制本地影片（ROI key = camera_id_local）
     python src/pipeline/multistream.py --mode op                 # op 模式，headless
     python src/pipeline/multistream.py --cameras cam_platform_north,cam_escalator_up
     python src/pipeline/multistream.py --reset-roi cam_platform_north
@@ -41,6 +42,32 @@ from src.utils import load_yaml, log
 from src.roi.roi_manager import has_roi_record, draw_roi_interactive, save_roi_record
 from src.pipeline.camera_worker import CameraWorker
 
+
+def _is_rtsp_url(url: str) -> bool:
+    return isinstance(url, str) and (url.startswith("rtsp://") or url.startswith("rtmp://"))
+
+
+def _probe_rtsp(url: str, timeout: float = 6.0) -> bool:
+    """背景執行緒探測 RTSP 是否可連接，timeout 秒內有回應回傳 True。"""
+    reachable = [False]
+
+    def _try():
+        cap = cv2.VideoCapture(url)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            reachable[0] = ret
+        cap.release()
+
+    t = threading.Thread(target=_try, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    return reachable[0]
+
+
+def _roi_key(camera_id: str, use_rtsp: bool) -> str:
+    """ROI record key：RTSP → camera_id_rtsp，本地影片 → camera_id_local。"""
+    return f"{camera_id}_rtsp" if use_rtsp else f"{camera_id}_local"
+
 RECORDS_PATH = "configs/roi_records.json"
 CONFIG_PATH  = "configs/cameras.yaml"
 
@@ -51,21 +78,31 @@ _INFO_H  = 58   # 底部資訊列高度（2行 × 29px）
 
 # ── ROI 設定流程 ──────────────────────────────────────────────────────────────
 
-def ensure_roi(cam_cfg: dict, records_path: str, reset: bool = False):
+def ensure_roi(cam_cfg: dict, records_path: str, reset: bool = False,
+               use_rtsp: bool = False):
     camera_id = cam_cfg["id"]
-    if reset or not has_roi_record(camera_id, records_path):
-        action = "重新繪製" if reset else "尚無紀錄，開啟繪製工具"
-        log("ROI", f"{camera_id}（{cam_cfg.get('name', '')}）{action}")
-        source = cam_cfg.get("fallback") or cam_cfg["source"]
-        # 傳入此攝影機已啟用的功能清單，供 feature 選單過濾用
-        enabled = [k for k, v in cam_cfg.get("features", {}).items() if v]
-        rois = draw_roi_interactive(str(source), enabled_features=enabled or None)
+    key       = _roi_key(camera_id, use_rtsp)
+    if reset or not has_roi_record(key, records_path):
+        src_type = "RTSP" if use_rtsp else "local"
+        action   = "重新繪製" if reset else "尚無紀錄，開啟繪製工具"
+        log("ROI", f"{camera_id}（{src_type}）{action}  [key={key}]")
+        source  = (cam_cfg["source"] if use_rtsp
+                   else cam_cfg.get("fallback") or cam_cfg["source"])
+        title = f"{cam_cfg.get('name', camera_id)}  [{src_type}]"
+        try:
+            rois = draw_roi_interactive(str(source),
+                                        enabled_features=None,   # 永遠顯示全部功能
+                                        title=title)
+        except RuntimeError as e:
+            log("ERROR", f"[{camera_id}] ROI 畫面擷取失敗: {e}")
+            rois = []
         if rois:
-            save_roi_record(camera_id, rois, records_path)
+            save_roi_record(key, rois, records_path)
         else:
             log("ROI", f"{camera_id} 未設定 ROI（跳過所有功能）")
     else:
-        log("ROI", f"{camera_id} 已有 ROI 設定，直接載入")
+        key_hint = "(RTSP)" if use_rtsp else "(local)"
+        log("ROI", f"{camera_id} 已有 ROI 設定，直接載入 {key_hint}")
 
 
 # ── Panel 版面繪製 ────────────────────────────────────────────────────────────
@@ -238,29 +275,52 @@ def main():
         log("ERROR", "未設定任何攝影機")
         return
 
-    use_local = (args.source == "local" or
-                 (args.source == "auto" and args.mode == "dev"))
+    # ── 決定每台攝影機來源（RTSP 或本地影片）──────────────────────────────
+    use_rtsp_per_cam: dict[str, bool] = {}
+    for cam in cameras:
+        cid = cam["id"]
+        if args.source == "rtsp":
+            use_rtsp_per_cam[cid] = True
+        elif args.source == "local":
+            use_rtsp_per_cam[cid] = False
+        else:  # auto：探測 RTSP 是否可達
+            if _is_rtsp_url(cam.get("source", "")):
+                log("INFO", f"[{cid}] 探測 RTSP...")
+                reachable = _probe_rtsp(cam["source"])
+                use_rtsp_per_cam[cid] = reachable
+                log("INFO" if reachable else "WARN",
+                    f"[{cid}] RTSP {'可達，使用攝影機' if reachable else '不可達，切換本地影片'}")
+            else:
+                use_rtsp_per_cam[cid] = False
 
     reset_ids = set()
     if args.reset_roi:
         reset_ids = ({c["id"] for c in cameras} if args.reset_roi == "all"
                      else set(args.reset_roi.split(",")))
     for cam in cameras:
-        ensure_roi(cam, RECORDS_PATH, reset=(cam["id"] in reset_ids))
+        ensure_roi(cam, RECORDS_PATH, reset=(cam["id"] in reset_ids),
+                   use_rtsp=use_rtsp_per_cam[cam["id"]])
 
     frame_queues = {cam["id"]: queue.Queue(maxsize=2) for cam in cameras}
     workers: list[CameraWorker] = []
 
     for cam in cameras:
-        src = cam.get("fallback", cam["source"]) if use_local else cam["source"]
-        w   = CameraWorker(cam_cfg=cam, global_cfg=cfg, source=src,
-                           mode=args.mode, records_path=RECORDS_PATH,
-                           frame_queue=frame_queues[cam["id"]])
+        cid      = cam["id"]
+        use_rtsp = use_rtsp_per_cam[cid]
+        src      = (cam["source"] if use_rtsp
+                    else cam.get("fallback") or cam["source"])
+        roi_k    = _roi_key(cid, use_rtsp)
+        w = CameraWorker(cam_cfg=cam, global_cfg=cfg, source=src,
+                         mode=args.mode, records_path=RECORDS_PATH,
+                         roi_key=roi_k,
+                         frame_queue=frame_queues[cid])
         w.start()
         workers.append(w)
 
-    log("INFO", f"已啟動 {len(workers)} 路攝影機 "
-                f"[{args.mode} / {'local' if use_local else 'rtsp'}]")
+    rtsp_cams  = [c["id"] for c in cameras if use_rtsp_per_cam[c["id"]]]
+    local_cams = [c["id"] for c in cameras if not use_rtsp_per_cam[c["id"]]]
+    log("INFO", f"已啟動 {len(workers)} 路攝影機 [{args.mode}]  "
+                f"rtsp={rtsp_cams}  local={local_cams}")
 
     worker_map = {w.camera_id: w for w in workers}
 

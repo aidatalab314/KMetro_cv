@@ -8,23 +8,29 @@ cameras:
   # ── 北月台候車區 ──────────────────────────────────────────────────────────────
   - id: cam_platform_north
     name: "北月台候車區"
-    source: "rtsp://admin:admin@192.168.6.91/stream0"
+    source: "rtsp://admin:123456@192.168.6.91/stream0"
     fallback: "data/test_videos/metro/IMG_2733.MOV"
     features:
       dwell_monitor:   true    # 功能1：旅客滯留通報
-      zone_counter:    true    # 功能3：區域人流偵測
       fire_smoke:      true    # 功能2：火光煙霧偵測
+      zone_counter:    true    # 功能3：區域人流偵測
+      fall_detector:   true    # 功能4a：人員跌倒
+      luggage_roll:    true    # 功能4b：行李箱滾落
+      size_classifier: true    # 功能5：大件行李／輪椅偵測
 
   # ── 上行電扶梯 ────────────────────────────────────────────────────────────────
   - id: cam_escalator_up
     name: "上行電扶梯"
-    source: "rtsp://admin:admin@192.168.6.92/stream0"
+    source: "rtsp://root:root@192.168.6.92/cam1/h264"
     fallback: "data/test_videos/metro/IMG_2729.MOV"
     escalator_angle_deg: 30.0    # 電扶梯傾斜角（正值=上行）
     features:
+      dwell_monitor:   true    # 功能1：旅客滯留通報
+      fire_smoke:      true    # 功能2：火光煙霧偵測
+      zone_counter:    true    # 功能3：區域人流偵測
       fall_detector:   true    # 功能4a：人員跌倒
       luggage_roll:    true    # 功能4b：行李箱滾落
-      fire_smoke:      true    # 功能2：火光煙霧偵測
+      size_classifier: true    # 功能5：大件行李／輪椅偵測
 
   # ── 下行電扶梯 ────────────────────────────────────────────────────────────────
   - id: cam_escalator_down
@@ -33,9 +39,12 @@ cameras:
     fallback: "data/test_videos/metro/IMG_2745.MOV"
     escalator_angle_deg: -30.0   # 電扶梯傾斜角（負值=下行）
     features:
+      dwell_monitor:   true    # 功能1：旅客滯留通報
+      fire_smoke:      true    # 功能2：火光煙霧偵測
+      zone_counter:    true    # 功能3：區域人流偵測
       fall_detector:   true    # 功能4a：人員跌倒
       luggage_roll:    true    # 功能4b：行李箱滾落
-      fire_smoke:      true    # 功能2：火光煙霧偵測
+      size_classifier: true    # 功能5：大件行李／輪椅偵測
 
   # ── 電梯前乘場 ────────────────────────────────────────────────────────────────
   - id: cam_elevator_lobby
@@ -43,9 +52,12 @@ cameras:
     source: "rtsp://admin:admin@192.168.6.94/stream0"
     fallback: "data/test_videos/metro/IMG_2749.MOV"
     features:
-      size_classifier: true    # 功能5：大件行李／輪椅偵測
       dwell_monitor:   true    # 功能1：電梯前等候滯留
       fire_smoke:      true    # 功能2：火光煙霧偵測
+      zone_counter:    true    # 功能3：區域人流偵測
+      fall_detector:   true    # 功能4a：人員跌倒
+      luggage_roll:    true    # 功能4b：行李箱滾落
+      size_classifier: true    # 功能5：大件行李／輪椅偵測
 
 
 # ── 模型路徑 ─────────────────────────────────────────────────────────────────
