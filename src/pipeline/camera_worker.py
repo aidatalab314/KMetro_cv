@@ -172,6 +172,8 @@ class CameraWorker(threading.Thread):
 
         # ── 狀態（供 multistream display thread 讀取，不需加鎖）────────────
         self.fps:          float = 0.0
+        self._fps_frames:  int   = 0    # 1 秒滾動視窗計數
+        self._fps_t0:      float = 0.0
         self.source_failed: bool = False                  # RTSP + fallback 均失敗
         self._last_annotated: np.ndarray | None = None   # skip-frame cache
         # 最近 5 筆告警，deque 在 CPython append 操作是 thread-safe
@@ -208,8 +210,6 @@ class CameraWorker(threading.Thread):
         log("INFO", f"[{self.camera_id}] 開始推論 {w}x{h}@{src_fps:.1f}fps "
                     f"skip={self._skip} 功能=[{active}]")
 
-        t_frame = time.time()
-
         while not self._stop_event.is_set():
             ret, frame = self._reader.read()
             if not ret:
@@ -235,10 +235,16 @@ class CameraWorker(threading.Thread):
                 else:
                     annotated = frame
 
+            # ── 1 秒滾動視窗 FPS（穩定、無逐幀抖動）────────────────────────
             now = time.time()
-            self.fps = 1.0 / max(now - t_frame, 1e-6)
-            self.status_info["fps"] = self.fps
-            t_frame = now
+            self._fps_frames += 1
+            if self._fps_t0 == 0.0:
+                self._fps_t0 = now
+            elif now - self._fps_t0 >= 1.0:
+                self.fps = self._fps_frames / (now - self._fps_t0)
+                self.status_info["fps"] = round(self.fps, 1)
+                self._fps_frames = 0
+                self._fps_t0 = now
 
             try:
                 self._queue.put_nowait((self.camera_id, annotated, self.fps))
