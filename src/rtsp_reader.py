@@ -30,20 +30,22 @@ def _resolve_source(src):
 def _guess_codec(rtsp_url: str) -> str:
     """從 URL 關鍵字推測串流 codec（h264 / h265）。"""
     low = rtsp_url.lower()
-    if any(k in low for k in ("h264", "264", "avc")):
-        return "h264"
-    return "h265"   # 預設 H.265（IP cam 較常見）
+    if any(k in low for k in ("h265", "265", "hevc")):
+        return "h265"
+    return "h264"   # 預設 H.264（IP cam 最常見；有 h265/265/hevc 才切換）
 
 
 def _build_gst_rtsp_pipeline(rtsp_url: str, hw_accel: bool = True) -> str:
     codec  = _guess_codec(rtsp_url)
     depay  = "rtph264depay" if codec == "h264" else "rtph265depay"
     parse  = "h264parse"    if codec == "h264" else "h265parse"
+    # URL 需加引號（含 @ : / 字元）；protocols=tcp 避免 udpsrc internal error
+    src_props = f'location="{rtsp_url}" latency=0 protocols=tcp'
 
     if hw_accel:
         # Jetson：nvv4l2decoder 硬體解碼（H.264 / H.265 均支援）
         return (
-            f"rtspsrc location={rtsp_url} latency=0 ! "
+            f"rtspsrc {src_props} ! "
             f"{depay} ! {parse} ! nvv4l2decoder ! "
             "nvvidconv ! video/x-raw,format=BGRx ! "
             "videoconvert ! video/x-raw,format=BGR ! "
@@ -52,7 +54,7 @@ def _build_gst_rtsp_pipeline(rtsp_url: str, hw_accel: bool = True) -> str:
     # Ubuntu x86 / 非 Jetson：avdec 軟體解碼
     avdec = "avdec_h264" if codec == "h264" else "avdec_h265"
     return (
-        f"rtspsrc location={rtsp_url} latency=0 ! "
+        f"rtspsrc {src_props} ! "
         f"{depay} ! {parse} ! {avdec} ! "
         "videoconvert ! video/x-raw,format=BGR ! "
         "appsink drop=true max-buffers=1 sync=false"
