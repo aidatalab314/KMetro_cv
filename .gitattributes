@@ -1,1 +1,2 @@
 models/**/*.pt filter=lfs diff=lfs merge=lfs -text
+models/fire_smoke/*.pt filter=lfs diff=lfs merge=lfs -text

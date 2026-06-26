@@ -7,7 +7,7 @@
   ✓ 功能4a: fall_detector（YOLO aspect ratio + RTMO pose 補位）
   ✓ 功能4b: luggage_roll（ByteTrack 速度向量 + LuggageRollMonitor）
   ✓ 功能5: size_classifier（LuggageDetector person_ratio）
-  TODO 功能2: fire_smoke（等待模型）
+  ✓ 功能2: fire_smoke（YOLOv8n，luminous0219/fire-and-smoke-detection-yolov8）
 """
 
 import threading
@@ -24,6 +24,7 @@ from src.rtsp_reader import RTSPReader
 from src.roi.roi_manager import ROIManager
 from src.event.event_manager import EventManager
 from src.detection.fall_detector import FallDetector
+from src.detection.fire_smoke_detector import FireSmokeDetector
 from src.detection.luggage_detector import LuggageDetector
 from src.detection.pose_detector import PoseDetector
 from src.features.dwell_monitor import DwellMonitor
@@ -121,11 +122,18 @@ class CameraWorker(threading.Thread):
                     device=pf.get("device", "cpu"),
                 )
 
-        self._fire_det = None
+        self._fire_det: FireSmokeDetector | None = None
         if enabled.get("fire_smoke"):
             fire_path = model_cfg.get("fire_smoke", "")
             if not Path(fire_path).exists():
                 log("WARN", f"[{self.camera_id}] fire_smoke 模型不存在，略過: {fire_path}")
+            else:
+                fs = feat_cfg.get("fire_smoke", {})
+                self._fire_det = FireSmokeDetector(
+                    weight_path=fire_path,
+                    conf=fs.get("conf", 0.5),
+                    alert_frames=fs.get("alert_frames", 3),
+                )
 
         # ── 功能模組 ─────────────────────────────────────────────────────────
         self._dwell_mon: DwellMonitor | None = None
@@ -255,6 +263,10 @@ class CameraWorker(threading.Thread):
         if self._luggage_det is not None:
             all_luggage = self._luggage_det.detect(frame, persons=all_persons)
 
+        all_fire_smoke: list[dict] = []
+        if self._fire_det is not None:
+            all_fire_smoke = self._fire_det.detect(frame)
+
         # Step 2：各功能使用各自 ROI 過濾
         #  - 有對應 ROI → 在 ROI 內的偵測結果
         #  - 無對應 ROI → 空 list（跳過此功能）
@@ -280,6 +292,7 @@ class CameraWorker(threading.Thread):
         self._run_fall_logic(annotated, fall_in_roi, alert_persons)
         self._run_luggage_roll(annotated, lug_roll_roi, all_persons)
         self._run_size_classifier(annotated, lug_size_roi)
+        self._run_fire_smoke(annotated, all_fire_smoke)
 
         # Step 5：ROI overlay（最上層）
         self._roi.draw(annotated)
@@ -413,6 +426,43 @@ class CameraWorker(threading.Thread):
                 if fired:
                     self._push_alert("large_luggage",
                                      rois[0] if rois else "global", "WARNING")
+
+    def _run_fire_smoke(self, annotated: np.ndarray,
+                        all_detections: list[dict]):
+        if self._fire_det is None:
+            return
+        # 有 fire_smoke ROI → 只看 ROI 內；無 ROI → 全幀偵測（fire/smoke 通常全場監視）
+        if self._roi.has_roi_for_feature("fire_smoke"):
+            detections = self._in_roi(all_detections, "fire_smoke")
+        else:
+            detections = all_detections
+
+        alerts = self._fire_det.compute_alerts(detections)
+        self._fire_det.draw(annotated, detections, alerts)
+
+        for label, triggered in alerts.items():
+            if not triggered:
+                continue
+            best = max(
+                (d for d in detections if d["label"] == label),
+                key=lambda d: d["conf"], default=None,
+            )
+            if best is None:
+                continue
+            rois = self._roi.get_containing_rois_for_feature(
+                best["cx"], best["cy"], "fire_smoke")
+            event_type = f"{label}_detected"
+            fired = self._events.trigger(
+                event_type=event_type,
+                roi_id=rois[0] if rois else "global",
+                severity="CRITICAL",
+                confidence=best["conf"],
+                frame=annotated,
+                extra={"label": label},
+            )
+            if fired:
+                self._push_alert(event_type,
+                                 rois[0] if rois else "global", "CRITICAL")
 
     # ── 工具 ─────────────────────────────────────────────────────────────────
 
