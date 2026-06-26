@@ -264,7 +264,7 @@ class CameraWorker(threading.Thread):
             all_luggage = self._luggage_det.detect(frame, persons=all_persons)
 
         all_fire_smoke: list[dict] = []
-        if self._fire_det is not None:
+        if self._fire_det is not None and self._roi.has_roi_for_feature("fire_smoke"):
             all_fire_smoke = self._fire_det.detect(frame)
 
         # Step 2：各功能使用各自 ROI 過濾
@@ -431,11 +431,7 @@ class CameraWorker(threading.Thread):
                         all_detections: list[dict]):
         if self._fire_det is None:
             return
-        # 有 fire_smoke ROI → 只看 ROI 內；無 ROI → 全幀偵測（fire/smoke 通常全場監視）
-        if self._roi.has_roi_for_feature("fire_smoke"):
-            detections = self._in_roi(all_detections, "fire_smoke")
-        else:
-            detections = all_detections
+        detections = self._in_roi(all_detections, "fire_smoke")
 
         alerts = self._fire_det.compute_alerts(detections)
         self._fire_det.draw(annotated, detections, alerts)
