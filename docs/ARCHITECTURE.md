@@ -16,14 +16,14 @@
 4 台 RTSP 攝影機
   │
   ├─ cam_platform_north  → CameraWorker Thread ─┐
-  ├─ cam_escalator_up    → CameraWorker Thread ─┤
-  ├─ cam_escalator_down  → CameraWorker Thread ─┤  frame queues
-  └─ cam_elevator_lobby  → CameraWorker Thread ─┤
+  ├─ cam_escalator_up    → CameraWorker Thread ─┤  submit frame
+  ├─ cam_escalator_down  → CameraWorker Thread ─┤──→ InferenceBus ──→ GPU (batch×4)
+  └─ cam_elevator_lobby  → CameraWorker Thread ─┘  future.result()
                                                  │
-                          multistream.py ────────┤
-                          ├─ Dev: Display Loop   │ (consume + show)
-                          │   └─ Mosaic Writer   │ (4-panel video)
-                          └─ Op:  Mosaic Thread ─┘ (consume + record)
+                          multistream.py ─────── frame queues
+                          ├─ Dev: Display Loop        (consume + show)
+                          │   └─ Mosaic Writer         (4-panel video)
+                          └─ Op:  Mosaic Thread        (consume + record)
 ```
 
 ---
@@ -33,13 +33,15 @@
 ```
 src/
 ├── pipeline/
-│   ├── multistream.py      # 主入口：啟動 workers、顯示迴圈、mosaic 錄影
-│   ├── camera_worker.py    # 單攝影機執行緒（推論 + 功能模組）
-│   └── run_inference.py    # 舊版單影片模式（backward compat，保留）
+│   ├── multistream.py      # 主入口：啟動 InferenceBus + workers、顯示迴圈、mosaic 錄影
+│   └── camera_worker.py    # 單攝影機執行緒（preprocess → bus.submit → parse → 功能模組）
+├── inference/
+│   └── inference_bus.py    # 共用 GPU 推論 hub（batch×N，ByteTrack per-camera 隔離）
 ├── detection/
-│   ├── fall_detector.py    # YOLO12l 人員偵測 + 跌倒 aspect ratio 判斷
-│   ├── luggage_detector.py # 行李 YOLO + 大小分類（person_ratio）
-│   └── pose_detector.py    # RTMO bottom-up 姿態估計（跌倒補位）
+│   ├── fall_detector.py    # YOLO12l 人員偵測：preprocess() / parse_result() / detect()
+│   ├── luggage_detector.py # 行李 YOLO + 大小分類：parse_result() / detect()
+│   ├── fire_smoke_detector.py  # YOLOv8n 火煙偵測：parse_result() / detect()
+│   └── pose_detector.py    # RTMO bottom-up 姿態估計（跌倒補位，直接模式）
 ├── features/
 │   ├── dwell_monitor.py    # ByteTrack ID + ROI 滯留計時 + 告警
 │   ├── zone_counter.py     # ROI 內人數計數（每 N 秒）
@@ -48,7 +50,7 @@ src/
 │   └── roi_manager.py      # ROI 互動繪製、I/O、多邊形 + 全畫面模式
 ├── event/
 │   └── event_manager.py    # 事件 log + snapshot + 預留 hook
-├── rtsp_reader.py          # 影像來源抽象（本地/RTSP，GStreamer HW fallback）
+├── rtsp_reader.py          # 影像來源抽象（本地/RTSP，GStreamer SW→HW fallback）
 └── utils.py                # YAML loader（.local.yaml 覆蓋）+ logger
 ```
 
@@ -56,27 +58,39 @@ src/
 
 ## 每幀處理流程（CameraWorker._process）
 
+### Bus 模式（Ubuntu / 部署，預設）
+
 ```
-RTSPReader.read()  →  [clean frame（未標注）]
+RTSPReader.read()  →  [clean frame]
      │
-     ├─ FallDetector.detect()    → all_persons（含 track_id, fallen, bbox）
-     └─ LuggageDetector.detect() → all_luggage（含 track_id, size, bbox）
+     ├─ FallDetector.preprocess()         # CLAHE + Gamma（CPU，在 worker 執行）
+     │
+     ├─ InferenceBus.submit(preprocessed, orig)
+     │        ↓  等待 future.result()
+     │   InferenceBus（單一 GPU 執行緒）：
+     │     ① 收集 N 路幀（最多等 40ms）
+     │     ② person_model.track([f0..f3])   # batch×4，ByteTrack 狀態按位置隔離
+     │     ③ luggage_model.track([f0..f3])  # batch×4
+     │     ④ fire_model([f0..f3])           # batch×4（YOLOv8n .pt）
+     │     ⑤ 分發 Results 給各 worker future
+     │
+     ├─ parse_result()                     # CPU，各 worker 獨立解析
+     │    FallDetector.parse_result(raw["person"])
+     │    LuggageDetector.parse_result(raw["luggage"], h, w, persons)
+     │    FireSmokeDetector.parse_result(raw["fire"])   # 僅有 ROI 時
      │
      ├─ ROI 過濾（per feature）
      │    _in_roi(dets, feature)：
-     │      有 ROI 設定 → 只回傳 ROI 內的偵測結果
+     │      有 ROI 設定 → 只回傳 ROI 內偵測結果
      │      無 ROI 設定 → 回傳空 list（不執行此功能）
-     │      全畫面 ROI（[F] 設定）→ 全部回傳
-     │
-     ├─ Pose 補位（fall_detector ROI 內無 YOLO person 時）
-     │    PoseDetector.detect() → skeleton → 跌倒角度判斷
      │
      ├─ 功能模組
-     │    DwellMonitor.update()       → 超時告警
-     │    ZoneCounter.update()        → 人數 + 人潮告警
+     │    DwellMonitor.update()        → 超時告警
+     │    ZoneCounter.update()         → 人數 + 人潮告警
      │    FallDetector.compute_alert() → 跌倒告警
-     │    LuggageRollMonitor.update() → 滾落告警
-     │    LuggageDetector（size）     → 大件告警
+     │    LuggageRollMonitor.update()  → 滾落告警
+     │    LuggageDetector（size）      → 大件告警
+     │    FireSmokeDetector.compute_alerts() → 火煙告警
      │
      ├─ ROI.draw() + 各功能 draw()  →  annotated frame
      │
@@ -85,17 +99,53 @@ RTSPReader.read()  →  [clean frame（未標注）]
           Queue.put()           →  display / mosaic thread
 ```
 
+### 直接模式（Mac 開發 / bus=None）
+
+Bus 不存在時，`_process()` 改為各偵測器直接 `detect()` → 行為與舊版相同。
+
 ---
 
 ## 執行緒模型
 
 | 執行緒 | 數量 | 職責 |
 |--------|------|------|
-| `CameraWorker` | N（每攝影機一條） | 讀幀 → 推論 → 功能模組 → 寫幀到 queue |
-| Dev display loop | 1（main thread） | 讀 queue → 組 mosaic → imshow → mosaic 寫檔 |
+| `InferenceBus` | 1 | 湊幀 → batch 推論 → 分發結果（所有路共享） |
+| `CameraWorker` | N（每攝影機一條） | 讀幀 → preprocess → 等 Bus → parse → 功能模組 |
+| Dev display loop | 1（main thread） | 讀 queue → 組 mosaic → imshow → 可選 mosaic 寫檔 |
 | `_MosaicOpThread` | 1（op 模式） | 讀所有 queue → 組 mosaic → 寫檔 |
 
-> queue maxsize=2，`put_nowait` 滿則丟幀，顯示端不阻塞推論端。
+> Queue maxsize=4，`put_nowait` 滿則丟幀（顯示端不阻塞推論端）。
+
+---
+
+## 推論加速策略
+
+| 平台 | RTSP 解碼 | 推論模式 | imgsz | skip_frames | 實測 fps |
+|------|-----------|----------|-------|-------------|---------|
+| Mac M1 | FFmpeg（cv2 預設） | PyTorch MPS，直接模式 | 640 | 2 | ~8fps |
+| Ubuntu RTX 5060 | GStreamer avdec（SW） | TRT FP16 + InferenceBus batch×4 | 640 | 1 | **13–14fps** |
+| Jetson Orin | GStreamer nvv4l2decoder（HW） | TRT FP16 + InferenceBus batch×4 | 640 | 1 | TBD |
+
+### InferenceBus 效能數字（Ubuntu RTX 5060，2026-06-26）
+
+```
+batch#50  avg_infer=41ms  avg_wait=32ms  mode=batch×4
+fps=13.9  read=2ms  infer=77ms   ← GPU 瓶頸（正常），非相機限制
+
+優化前（4.9fps）: read=195ms（相機 5fps RTSP 限制），infer=8ms，GPU 閒置
+優化後（13.9fps）: read=2ms（GStreamer drop 舊幀），infer=77ms（等 Bus 結果）
+```
+
+### TensorRT Engine 規格
+
+| 模型 | 來源 | Export 參數 | 檔案大小 |
+|------|------|-------------|---------|
+| `yolo12l.engine` | yolo12l.pt | batch=4, imgsz=640, half=True | ~53 MB |
+| `yolo_luggage_best.engine` | yolo_luggage_best.pt | batch=4, imgsz=640, half=True | ~7 MB |
+| `fire_smoke.pt` | luminous0219/fire-and-smoke-detection-yolov8 | YOLOv8n，PyTorch（不需 TRT） | ~6 MB |
+
+> **注意**：engine 需在目標機器上 export（TRT engine 與 GPU 架構綁定）。
+> Export 指令詳見 `docs/INSTALL_UBUNTU.md`。
 
 ---
 
@@ -110,22 +160,23 @@ RTSPReader.read()  →  [clean frame（未標注）]
 
 ---
 
-## 推論加速策略
+## 雙機開發流程
 
-| 平台 | RTSP 解碼 | 模型推論 | skip_frames |
-|------|-----------|----------|-------------|
-| Mac M1 | FFmpeg（cv2 預設） | PyTorch MPS | 2 |
-| Ubuntu x86 + GeForce RTX | GStreamer avdec SW → FFmpeg fallback | TensorRT `.engine`（FP16） | 1 |
-| Jetson Orin | GStreamer nvv4l2decoder HW（H.264/H.265） | TensorRT `.engine` | 1 |
+| 項目 | Mac M1（開發） | Ubuntu RTX 5060（測試） |
+|------|--------------|------------------------|
+| 設定檔 | `configs/cameras.local.yaml` | `configs/cameras.local.yaml` |
+| 模型格式 | `.pt`（PyTorch MPS） | `.engine`（TRT FP16） |
+| 推論模式 | 直接模式（bus=None） | InferenceBus batch×4 |
+| 影像來源 | `--source local`（本地影片） | `--source rtsp`（RTSP 攝影機） |
+| 設定同步 | `cameras.local.yaml` 不進版控，各機獨立 | 同左 |
 
-> Ubuntu x86 RTSP 解碼：`nvv4l2decoder` 是 Jetson 專屬，Ubuntu 使用 `avdec_h264`/`avdec_h265`
-> 軟體解碼，或 cv2 FFmpeg fallback。GPU 資源保留給 TensorRT 推論。
+```bash
+# 兩端同步方式
+git pull   # 拉程式碼更新（不影響 local.yaml）
 
-Jetson TensorRT 轉換：
+# Mac 啟動
+python src/pipeline/multistream.py --source local
 
-```python
-from ultralytics import YOLO
-YOLO("models/fall_detection/yolo12l.pt").export(format="engine", device=0)
-# 產生 models/fall_detection/yolo12l.engine
-# 在 cameras.local.yaml 改用 .engine 路徑
+# Ubuntu 啟動
+python src/pipeline/multistream.py --source rtsp --mode op
 ```
