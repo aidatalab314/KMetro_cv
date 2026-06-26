@@ -85,6 +85,12 @@ class InferenceBus:
         self._t_infer_sum = 0.0
         self._t_wait_sum  = 0.0
 
+        # ── 串行 fallback（TRT engine batch=1 時自動切換）──────────────────
+        self._seq_mode = False
+        # 每路獨立的 ByteTrack 狀態（串行模式用）
+        self._seq_person_trackers:  list = [[] for _ in range(n)]
+        self._seq_luggage_trackers: list = [[] for _ in range(n)]
+
         threading.Thread(target=self._run, daemon=True,
                          name="inference-bus").start()
         log("INFO", f"[InferenceBus] 啟動完成  cameras={self._cam_order}  "
@@ -107,6 +113,106 @@ class InferenceBus:
         if full:
             self._event.set()  # 提前喚醒（不等 timeout）
         return fut
+
+    # ── 推論方法 ──────────────────────────────────────────────────────────────
+
+    def _infer(self, pre_frames: list, ori_frames: list):
+        """
+        嘗試 batch 推論；若 TRT engine 不支援目前 batch size 則自動切換至串行模式。
+        回傳 (pr_list, lr_list, fr_list)，各長度為 self._n。
+        """
+        if self._seq_mode:
+            return self._infer_seq(pre_frames, ori_frames)
+
+        try:
+            pr = self._person_model.track(
+                pre_frames,
+                conf=self._person_conf, imgsz=self._person_imgsz,
+                classes=[0], verbose=False,
+                persist=True, tracker="bytetrack.yaml",
+            )
+            lr = self._luggage_model.track(
+                ori_frames,
+                conf=self._luggage_conf, imgsz=self._luggage_imgsz,
+                verbose=False,
+                persist=True, tracker="bytetrack.yaml",
+            )
+            fr = ([None] * self._n if self._fire_model is None
+                  else self._fire_model(
+                      ori_frames,
+                      conf=self._fire_conf, imgsz=self._fire_imgsz,
+                      verbose=False,
+                  ))
+            return pr, lr, fr
+
+        except RuntimeError as e:
+            err = str(e)
+            if "not equal to" in err or "max model size" in err or "batch" in err.lower():
+                self._seq_mode = True
+                log("WARN",
+                    "[InferenceBus] TRT engine batch_size=1，自動切換串行模式\n"
+                    "  tracking 功能維持正常，但吞吐量較低\n"
+                    "  建議重新 export engine（batch=4 imgsz=640）後重啟：\n"
+                    "    python -c \"from ultralytics import YOLO; "
+                    "YOLO('models/fall_detection/yolo12l.pt').export("
+                    "format='engine', batch=4, imgsz=640, device=0, half=True)\"\n"
+                    "    python -c \"from ultralytics import YOLO; "
+                    "YOLO('models/luggage/yolo_luggage_best.pt').export("
+                    "format='engine', batch=4, imgsz=640, device=0, half=True)\"")
+                return self._infer_seq(pre_frames, ori_frames)
+            raise
+
+    def _infer_seq(self, pre_frames: list, ori_frames: list):
+        """
+        串行 batch=1 推論，逐路執行 model.track() 並隔離各路 ByteTrack 狀態。
+        保證 track_id 按攝影機正確延續（不互相污染）。
+        """
+        pr, lr, fr = [], [], []
+        for i in range(self._n):
+            pr.append(self._track_one(
+                self._person_model, pre_frames[i],
+                self._seq_person_trackers, i,
+                conf=self._person_conf, imgsz=self._person_imgsz, classes=[0],
+            ))
+            lr.append(self._track_one(
+                self._luggage_model, ori_frames[i],
+                self._seq_luggage_trackers, i,
+                conf=self._luggage_conf, imgsz=self._luggage_imgsz,
+            ))
+            fr.append(
+                self._fire_model(
+                    [ori_frames[i]], conf=self._fire_conf,
+                    imgsz=self._fire_imgsz, verbose=False,
+                )[0] if self._fire_model else None
+            )
+        return pr, lr, fr
+
+    def _track_one(self, model, frame: np.ndarray,
+                   tracker_cache: list, cam_idx: int, **kwargs) -> object:
+        """
+        以 cam_idx 專屬的 ByteTrack 狀態執行單幀 track()。
+        透過 save/restore model.predictor.trackers 隔離各路狀態。
+        """
+        pred  = getattr(model, 'predictor', None)
+        saved = None
+
+        if pred is not None and hasattr(pred, 'trackers'):
+            saved = list(pred.trackers)
+            pred.trackers = list(tracker_cache[cam_idx])
+
+        result = model.track(
+            [frame], persist=True, tracker="bytetrack.yaml",
+            verbose=False, **kwargs,
+        )[0]
+
+        # 取回更新後的 tracker 狀態
+        pred2 = getattr(model, 'predictor', None)
+        if pred2 is not None and hasattr(pred2, 'trackers'):
+            tracker_cache[cam_idx] = list(pred2.trackers)
+            if saved is not None:
+                pred2.trackers = saved
+
+        return result
 
     # ── 推論執行緒 ────────────────────────────────────────────────────────────
 
@@ -154,27 +260,7 @@ class InferenceBus:
             try:
                 t_inf0 = time.time()
 
-                # person + ByteTrack（batch_size=N, 順序固定）
-                pr = self._person_model.track(
-                    self._last_pre,
-                    conf=self._person_conf, imgsz=self._person_imgsz,
-                    classes=[0], verbose=False,
-                    persist=True, tracker="bytetrack.yaml",
-                )
-                # luggage + ByteTrack
-                lr = self._luggage_model.track(
-                    self._last_orig,
-                    conf=self._luggage_conf, imgsz=self._luggage_imgsz,
-                    verbose=False,
-                    persist=True, tracker="bytetrack.yaml",
-                )
-                # fire/smoke（不需 tracking）
-                fr: list = ([None] * self._n if self._fire_model is None
-                            else self._fire_model(
-                                self._last_orig,
-                                conf=self._fire_conf, imgsz=self._fire_imgsz,
-                                verbose=False,
-                            ))
+                pr, lr, fr = self._infer(self._last_pre, self._last_orig)
 
                 t_inf1 = time.time()
 
@@ -193,9 +279,10 @@ class InferenceBus:
                 if self._batch_count % 50 == 0:
                     avg_i = self._t_infer_sum / self._batch_count
                     avg_w = self._t_wait_sum  / self._batch_count
+                    mode  = "seq" if self._seq_mode else f"batch×{self._n}"
                     log("INFO", f"[InferenceBus] batch#{self._batch_count}  "
                                 f"avg_infer={avg_i:.0f}ms  avg_wait={avg_w:.0f}ms  "
-                                f"n_cam={self._n}  active={len(futures_map)}")
+                                f"mode={mode}")
                     self._t_infer_sum = self._t_wait_sum = 0.0
                     self._batch_count = 0
 
