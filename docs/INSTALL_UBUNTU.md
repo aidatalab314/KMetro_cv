@@ -3,14 +3,23 @@
 > 適用環境：Ubuntu 24.04 LTS，NVIDIA GeForce RTX 5060（Blackwell GB206）
 > 不適用 Jetson 系列（Jetson 使用 nvv4l2decoder / JetPack，路徑不同）
 
+**確認測試環境**
+
+| 元件 | 測試版本 | 最低需求 |
+|------|----------|----------|
+| Ubuntu | 24.04 LTS | 24.04 |
+| NVIDIA Driver | 580.x | 570+ (open kernel) |
+| CUDA | 13.0 | 12.8+ |
+| GPU | RTX 5060 (sm_120) | Blackwell (sm_120) |
+
 ---
 
 ## 目錄
 
 1. [系統需求確認](#1-系統需求確認)
 2. [NVIDIA 驅動程式](#2-nvidia-驅動程式)
-3. [CUDA Toolkit 12.8](#3-cuda-toolkit-128)
-4. [cuDNN 9](#4-cudnn-9)
+3. [CUDA Toolkit 13.0](#3-cuda-toolkit-130)
+4. [cuDNN](#4-cudnn)
 5. [GStreamer（RTSP 解碼）](#5-gstreamer)
 6. [Python 環境（venv）](#6-python-環境venv)
 7. [OpenCV 驗證](#7-opencv-驗證)
@@ -31,7 +40,8 @@ lsb_release -a
 # GPU 確認（應看到 RTX 5060）
 lspci | grep -i nvidia
 
-# 確認已插顯示卡且 BIOS 未停用
+# 若驅動已裝，確認版本
+nvidia-smi
 ```
 
 預期 GPU compute capability：**12.0**（Blackwell GB206）
@@ -40,16 +50,17 @@ lspci | grep -i nvidia
 
 ## 2. NVIDIA 驅動程式
 
-RTX 5060（Blackwell）需要 **Driver 570+** 且必須使用 **open kernel module**。
+RTX 5060（Blackwell）需要 **Driver 570+**，必須使用 **open kernel module**。
+測試環境使用 Driver 580，效果更佳。
 
 ```bash
 sudo apt update
 
-# 自動安裝建議版本（open kernel module 版）
-sudo ubuntu-drivers install --gpgpu nvidia:570-open
+# 自動安裝最新建議版本（open kernel module 版）
+sudo ubuntu-drivers install --gpgpu
 
-# 或手動指定
-# sudo apt install -y nvidia-driver-570-open
+# 或手動指定版本
+# sudo apt install -y nvidia-driver-580-open
 
 sudo reboot
 ```
@@ -58,41 +69,70 @@ sudo reboot
 
 ```bash
 nvidia-smi
-# 應看到 Driver Version: 570.x  CUDA Version: 12.8
+# 應看到 Driver Version: 580.x  CUDA Version: 13.0
 ```
+
+> `nvidia-smi` 顯示的 CUDA Version 代表該驅動**最高支援**的 CUDA 版本，
+> 向下相容所有舊版 CUDA runtime（PyTorch cu128 在此環境下可正常使用）。
 
 ---
 
-## 3. CUDA Toolkit 12.8
+## 3. CUDA Toolkit 13.0
 
-RTX 5060（Blackwell, sm_120）需要 **CUDA 12.8 以上**。
+RTX 5060（sm_120）需要 **CUDA 12.8 以上**。測試環境為 CUDA 13.0。
+
+> **已有 CUDA Toolkit 的機器可跳至步驟 3c（環境變數設定）**
+
+### 3a. 加入 NVIDIA 套件庫
 
 ```bash
-# 加入 NVIDIA CUDA 套件庫
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt update
+```
 
-# 安裝 CUDA Toolkit 12.8（不含驅動，驅動已在第 2 步安裝）
-sudo apt install -y cuda-toolkit-12-8
+### 3b. 安裝 CUDA Toolkit
 
-# 設定環境變數
-echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+```bash
+# CUDA 13.0（測試確認版本）
+sudo apt install -y cuda-toolkit-13-0
+
+# 若 13.0 尚未在套件庫，改裝最新可用版（12.8 以上皆可）
+# sudo apt install -y cuda-toolkit-12-8
+```
+
+### 3c. 設定環境變數
+
+```bash
+# 確認實際安裝路徑
+ls /usr/local/ | grep cuda
+
+# 依實際版本設定（範例為 13.0）
+CUDA_VER=13.0
+echo "export PATH=/usr/local/cuda-${CUDA_VER}/bin:\$PATH" >> ~/.bashrc
+echo "export LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VER}/lib64:\$LD_LIBRARY_PATH" >> ~/.bashrc
 source ~/.bashrc
 
 # 確認
 nvcc --version
-# nvcc: release 12.8
 ```
 
 ---
 
-## 4. cuDNN 9
+## 4. cuDNN
+
+PyTorch（cu128 wheel）和 TensorRT pip 套件均**自帶** cuDNN，對推論無需額外安裝。
+以下為選擇性安裝（自行編譯 CUDA 程式碼時才需要）：
 
 ```bash
-# 使用第 3 步已加入的 CUDA repo
-sudo apt install -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12
+# 確認可用的 cuDNN 套件版本
+apt-cache search cudnn | grep cuda
+
+# 依 CUDA 版本選擇安裝（以下為範例，請對應實際版本）
+# CUDA 13.0：
+sudo apt install -y libcudnn9-cuda-13 libcudnn9-dev-cuda-13
+# CUDA 12.x：
+# sudo apt install -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12
 
 # 確認
 dpkg -l | grep cudnn
@@ -160,21 +200,29 @@ python --version
 > **每次開新 terminal 都需要執行** `source ~/KMetro_cv/.venv/bin/activate`
 > 建議加入 alias：`echo "alias kmetro='source ~/KMetro_cv/.venv/bin/activate'" >> ~/.bashrc`
 
-### 6.3 PyTorch（CUDA 12.8）
+### 6.3 PyTorch
+
+PyTorch wheel 自帶 CUDA runtime，Driver 版本只需 ≥ wheel 所需的最低版本。
 
 ```bash
-# cu128 專用 build（務必使用此 index-url，不可用預設 PyPI）
+# 確認目前最新可用的 CUDA wheel（優先選擇最新）
+# cu128 = CUDA 12.8 build，Driver 570+ 皆可，在 580 / CUDA 13.0 環境下完全相容
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
+# 若 cu130 或更新版本已上架，可改用（版本更新 = 效能更好）
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+
 # 確認 CUDA 可用
-python -c "import torch; print('CUDA:', torch.cuda.is_available(), '| CUDA ver:', torch.version.cuda, '| GPU:', torch.cuda.get_device_name(0))"
-# 預期: CUDA: True | CUDA ver: 12.8 | GPU: NVIDIA GeForce RTX 5060
+python -c "import torch; print('CUDA:', torch.cuda.is_available(), '| runtime:', torch.version.cuda, '| GPU:', torch.cuda.get_device_name(0))"
+# 預期: CUDA: True | runtime: 12.8 (或 13.0) | GPU: NVIDIA GeForce RTX 5060
 ```
 
-### 6.4 TensorRT 10
+### 6.4 TensorRT
+
+TensorRT pip 套件同樣自帶 CUDA 12 runtime，與系統 CUDA 13.0 相容。
 
 ```bash
-# TensorRT Python bindings（需 CUDA 12.8）
+# cu12 bindings（與系統 CUDA 13.0 相容，自帶 cu12 libs）
 pip install tensorrt tensorrt-cu12-bindings tensorrt-cu12-libs
 
 # 確認
@@ -197,7 +245,7 @@ pip install "ultralytics[export]"
 python -c "
 import torch, cv2, ultralytics, tensorrt
 print('PyTorch   :', torch.__version__)
-print('CUDA      :', torch.cuda.is_available(), '|', torch.version.cuda)
+print('CUDA      :', torch.cuda.is_available(), '| runtime:', torch.version.cuda)
 print('GPU       :', torch.cuda.get_device_name(0))
 gst = cv2.getBuildInformation().split('GStreamer:')[1].split('\n')[0].strip()
 print('OpenCV    :', cv2.__version__, '| GStreamer:', gst)
@@ -400,10 +448,12 @@ pip uninstall opencv-python -y
 
 | 問題 | 原因 | 解法 |
 |------|------|------|
-| `nvidia-smi` 正常但 `torch.cuda.is_available()` 為 False | PyTorch 版本與 CUDA 不符 | 確認安裝 `cu128` build（`--index-url .../cu128`） |
-| TensorRT export 失敗：`sm_120 not supported` | TensorRT 版本太舊 | 升級至 TensorRT 10.x |
+| `nvidia-smi` 正常但 `torch.cuda.is_available()` 為 False | PyTorch wheel 與 Driver 不符 | 確認安裝 `cu128`（或更新）build；`--index-url .../cu128` |
+| `nvidia-smi` 顯示 CUDA 13.0，torch.version.cuda 顯示 12.8 | 正常現象 | `nvidia-smi` 顯示驅動最高支援版本；PyTorch 使用自帶 runtime，兩者無衝突 |
+| TensorRT export 失敗：`sm_120 not supported` | TensorRT 版本太舊 | 升級至 TensorRT 10.x（`pip install --upgrade tensorrt`） |
 | GStreamer RTSP 失敗，但 FFmpeg 可以 | `avdec_h264/h265` 未安裝 | `sudo apt install gstreamer1.0-libav` |
 | `nvv4l2decoder` 錯誤訊息出現 | Jetson 專屬元件，Ubuntu 正常觸發 | 可忽略，程式自動 fallback 到 avdec |
 | `.pt` 只有幾百 bytes | git-lfs 未啟用就 clone | `git lfs install && git lfs pull` |
 | `pip install` 後 `import` 失敗 | venv 未啟動 | `source ~/KMetro_cv/.venv/bin/activate` |
 | ROI 視窗無法顯示（headless server）| 無 X display | 加 `--mode op` 改用 headless |
+| cuDNN apt 套件找不到 | 套件名隨 CUDA 版本變 | `apt-cache search cudnn` 確認可用版本後安裝 |
