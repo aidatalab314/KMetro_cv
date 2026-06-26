@@ -198,9 +198,11 @@ class CameraWorker(threading.Thread):
         src_fps = self._reader.get_fps()
         is_file = self._reader.is_file()
 
+        # 輸出 fps = 實際推論 fps（只在 inference 幀寫入，避免跳幀複製造成慢動作）
+        out_fps = max(1.0, src_fps / self._skip)
         if (is_file and self._save_video_local) or \
            (not is_file and self._save_video_rtsp):
-            self._init_writer(w, h, src_fps)
+            self._init_writer(w, h, out_fps)
 
         active = ", ".join(k for k, v in self._feat.items() if v) or "（無）"
         log("INFO", f"[{self.camera_id}] 開始推論 {w}x{h}@{src_fps:.1f}fps "
@@ -221,26 +223,22 @@ class CameraWorker(threading.Thread):
             self._frame_n += 1
 
             if self._frame_n % self._skip == 0:
-                # Full inference frame: run detection + draw
+                # Inference frame: run detection + draw + write to file
                 annotated = self._process(frame)
                 self._last_annotated = annotated
+                if self._writer is not None:
+                    self._writer.write(annotated)
             else:
-                # Skip frame: reuse last annotated overlay to avoid flickering.
-                # We re-apply only the cheap ROI draw onto the current raw frame
-                # so the background pixels are fresh but detection boxes stay visible.
+                # Skip frame: display only（不寫入影片，避免重複幀造成慢動作）
                 if self._last_annotated is not None:
                     annotated = self._last_annotated
                 else:
-                    # First few frames before first inference: just show raw
                     annotated = frame
 
             now = time.time()
             self.fps = 1.0 / max(now - t_frame, 1e-6)
             self.status_info["fps"] = self.fps
             t_frame = now
-
-            if self._writer is not None:
-                self._writer.write(annotated)
 
             try:
                 self._queue.put_nowait((self.camera_id, annotated, self.fps))
