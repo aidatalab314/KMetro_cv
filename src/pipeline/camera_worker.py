@@ -174,6 +174,7 @@ class CameraWorker(threading.Thread):
         self.fps:          float = 0.0
         self._fps_frames:  int   = 0    # 1 秒滾動視窗計數
         self._fps_t0:      float = 0.0
+        self._fps_log_n:   int   = 0    # 每 10 秒輸出一次 log
         self.source_failed: bool = False                  # RTSP + fallback 均失敗
         self._last_annotated: np.ndarray | None = None   # skip-frame cache
         # 最近 5 筆告警，deque 在 CPython append 操作是 thread-safe
@@ -245,6 +246,10 @@ class CameraWorker(threading.Thread):
                 self.status_info["fps"] = round(self.fps, 1)
                 self._fps_frames = 0
                 self._fps_t0 = now
+                self._fps_log_n += 1
+                if self._fps_log_n % 10 == 0:   # 每 10 秒 log 一次
+                    log("INFO", f"[{self.camera_id}] [{self._mode}] "
+                                f"fps={self.fps:.1f} skip={self._skip}")
 
             try:
                 self._queue.put_nowait((self.camera_id, annotated, self.fps))
