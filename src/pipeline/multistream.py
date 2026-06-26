@@ -319,7 +319,7 @@ def main():
         ensure_roi(cam, RECORDS_PATH, reset=(cam["id"] in reset_ids),
                    use_rtsp=use_rtsp_per_cam[cam["id"]])
 
-    frame_queues = {cam["id"]: queue.Queue(maxsize=2) for cam in cameras}
+    frame_queues = {cam["id"]: queue.Queue(maxsize=4) for cam in cameras}
     workers: list[CameraWorker] = []
 
     for cam in cameras:
@@ -368,41 +368,47 @@ def main():
         return
 
     # ── Dev 模式顯示迴圈 ──────────────────────────────────────────────────────
-    last_frames: dict[str, tuple] = {}
+    last_frames:  dict[str, tuple]     = {}
+    last_mosaic:  np.ndarray | None    = None   # 無新幀時重用，避免重複建 mosaic
     mosaic_writer: cv2.VideoWriter | None = None
-    mosaic_next_t: float = 0.0   # 下一次寫幀的時間戳
+    mosaic_next_t: float = 0.0
     _win_initialized = False
 
     try:
         while True:
-            panels = []
+            # ── 1. 排空 queue，只保留每路最新幀 ───────────────────────────────
             got_new_frame = False
             for cam in cameras:
-                cid = cam["id"]
-                try:
-                    _, frame, fps = frame_queues[cid].get_nowait()
-                    last_frames[cid] = (frame, fps)
+                cid   = cam["id"]
+                latest = None
+                while True:                       # 排空 → 取最新，丟掉積壓舊幀
+                    try:
+                        latest = frame_queues[cid].get_nowait()
+                    except queue.Empty:
+                        break
+                if latest is not None:
+                    last_frames[cid] = (latest[1], latest[2])  # (frame, fps)
                     got_new_frame = True
-                except queue.Empty:
-                    pass
 
-                wk = worker_map[cid]
-                if cid in last_frames:
-                    frame, _ = last_frames[cid]
-                    panels.append(make_panel(frame, wk, panel_h))
-                elif wk.source_failed:
-                    panels.append(_make_nosource_panel(cid, panel_h))
-                else:
-                    panels.append(_make_waiting_panel(cid, panel_h))
+            # ── 2. 只在有新幀時重建 mosaic（省略重複 make_panel/build_mosaic）──
+            if got_new_frame or last_mosaic is None:
+                panels = []
+                for cam in cameras:
+                    cid = cam["id"]
+                    wk  = worker_map[cid]
+                    if cid in last_frames:
+                        panels.append(make_panel(last_frames[cid][0], wk, panel_h))
+                    elif wk.source_failed:
+                        panels.append(_make_nosource_panel(cid, panel_h))
+                    else:
+                        panels.append(_make_waiting_panel(cid, panel_h))
+                last_mosaic = build_mosaic(panels)
 
-            mosaic = build_mosaic(panels)
-
-            # mosaic 錄影：等所有 camera 都有真實影格 + 有新幀才寫入
-            # （避免 waiting panel 尺寸不一致 / 重複寫舊幀造成慢動作）
+            # ── 3. mosaic 錄影（rate-limited）────────────────────────────────
             if save_mosaic and got_new_frame and len(last_frames) == len(cameras):
                 now = time.time()
                 if mosaic_writer is None:
-                    h, w = mosaic.shape[:2]
+                    h, w = last_mosaic.shape[:2]
                     mosaic_dir.mkdir(parents=True, exist_ok=True)
                     mosaic_writer = cv2.VideoWriter(
                         str(mosaic_path), cv2.VideoWriter_fourcc(*"mp4v"),
@@ -411,24 +417,27 @@ def main():
                     mosaic_next_t = now
                     log("INFO", f"[Mosaic] 開始錄影: {mosaic_path}")
                 if now >= mosaic_next_t:
-                    mosaic_writer.write(mosaic)
+                    mosaic_writer.write(last_mosaic)
                     mosaic_next_t += 1.0 / mosaic_fps
 
+            # ── 4. 顯示 + 鍵盤事件 ──────────────────────────────────────────
             if not _win_initialized:
                 cv2.namedWindow(win_title, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(win_title, 1280, 720)
                 _win_initialized = True
-            cv2.imshow(win_title, mosaic)
+            cv2.imshow(win_title, last_mosaic)
 
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord('q')):
                 break
-            # 若所有 worker 都結束且沒有任何來源失敗（影片播完），才自動退出
-            # 有 source_failed 的 worker：保持顯示 NO SOURCE 黑畫面，等使用者按 q
             if (not any(w.is_alive() for w in workers) and
                     not any(w.source_failed for w in workers)):
                 log("INFO", "所有 worker 已結束")
                 break
+
+            # ── 5. 無新幀時短暫讓出 CPU，讓 inference thread 有更多時間 ──────
+            if not got_new_frame:
+                time.sleep(0.002)
 
     except KeyboardInterrupt:
         pass
