@@ -5,13 +5,19 @@ from ultralytics import YOLO
 
 
 class LuggageDetector:
-    def __init__(self, weight_path: str, conf: float = 0.4,
+    """
+    weight_path=None：Bus 模式，不載模型；僅提供 parse_result() 與繪圖。
+    tracking=True  ：使用 ByteTrack（直接模式時生效；Bus 模式由 InferenceBus 處理）。
+    """
+
+    def __init__(self, weight_path: str | None,
+                 conf: float = 0.4,
                  size_method: str = "person_ratio",
                  large_person_area_ratio: float = 0.22,
                  max_match_distance_px: float = 400,
                  large_area_ratio: float = 0.01,
                  tracking: bool = False):
-        self.model = YOLO(weight_path)
+        self.model = YOLO(weight_path) if weight_path else None
         self.conf = conf
         self.size_method = size_method
         self.large_person_area_ratio = large_person_area_ratio
@@ -21,7 +27,6 @@ class LuggageDetector:
 
     def _nearest_person(self, cx: int, cy: int,
                         persons: list[dict]) -> dict | None:
-        """找中心點距離最近且在 max_match_distance_px 內的行人"""
         best, best_dist = None, float("inf")
         for p in persons:
             px1, py1, px2, py2 = p["bbox"]
@@ -34,11 +39,6 @@ class LuggageDetector:
     def _classify_size(self, x1, y1, x2, y2,
                        frame_h: int, frame_w: int,
                        persons: list[dict]) -> tuple[str, str]:
-        """
-        Returns (size_label, method_used)
-        size_label : "Large" | "Small"
-        method_used: "person_ratio" | "frame_ratio"
-        """
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
         luggage_area = (x2 - x1) * (y2 - y1)
 
@@ -52,46 +52,46 @@ class LuggageDetector:
                     size = "Large" if ratio >= self.large_person_area_ratio else "Small"
                     return size, "person_ratio"
 
-        # 備援：frame ratio
         ratio = luggage_area / (frame_h * frame_w)
         size = "Large" if ratio >= self.large_area_ratio else "Small"
         return size, "frame_ratio"
 
+    def parse_result(self, result,
+                     frame_h: int, frame_w: int,
+                     persons: list[dict] | None = None) -> list[dict]:
+        """從單個 ultralytics Results 物件解析行李偵測結果（Bus 模式使用）。"""
+        if result is None or result.boxes is None:
+            return []
+        detections = []
+        for box in result.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            size, method = self._classify_size(
+                x1, y1, x2, y2, frame_h, frame_w, persons or [])
+            track_id = int(box.id[0]) if box.id is not None else -1
+            detections.append({
+                "bbox":     (x1, y1, x2, y2),
+                "conf":     float(box.conf[0]),
+                "size":     size,
+                "method":   method,
+                "cx":       (x1 + x2) // 2,
+                "cy":       (y1 + y2) // 2,
+                "track_id": track_id,
+            })
+        return detections
+
     def detect(self, frame: np.ndarray,
                persons: list[dict] = None) -> list[dict]:
-        """
-        persons: FallDetector.detect() 回傳的行人偵測結果，供 person_ratio 計算。
-        tracking=True 時使用 ByteTrack，結果含 track_id（-1 = 未指派）。
-        """
+        """直接推論（非 Bus 模式，向下相容）。"""
         h, w = frame.shape[:2]
         if self._tracking:
             results = self.model.track(frame, conf=self.conf, verbose=False,
                                        tracker="bytetrack.yaml", persist=True)
         else:
             results = self.model(frame, conf=self.conf, verbose=False)
-
-        detections = []
+        dets = []
         for r in results:
-            if r.boxes is None:
-                continue
-            for box in r.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                conf = float(box.conf[0])
-                size, method = self._classify_size(
-                    x1, y1, x2, y2, h, w, persons or [])
-                track_id = (int(box.id[0])
-                            if self._tracking and box.id is not None
-                            else -1)
-                detections.append({
-                    "bbox":     (x1, y1, x2, y2),
-                    "conf":     conf,
-                    "size":     size,
-                    "method":   method,
-                    "cx":       (x1 + x2) // 2,
-                    "cy":       (y1 + y2) // 2,
-                    "track_id": track_id,
-                })
-        return detections
+            dets.extend(self.parse_result(r, h, w, persons))
+        return dets
 
     def draw(self, frame: np.ndarray, detections: list[dict],
              roi_labels: list[str] = None) -> np.ndarray:

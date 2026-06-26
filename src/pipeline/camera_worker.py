@@ -31,13 +31,20 @@ from src.features.dwell_monitor import DwellMonitor
 from src.features.zone_counter import ZoneCounter
 from src.features.luggage_roll_monitor import LuggageRollMonitor
 
+# TYPE_CHECKING 避免循環 import（InferenceBus 在 inference 模組）
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from src.inference.inference_bus import InferenceBus
+
 
 class CameraWorker(threading.Thread):
 
     def __init__(self, cam_cfg: dict, global_cfg: dict, source,
                  mode: str, records_path: str, frame_queue: queue.Queue,
-                 roi_key: str | None = None):
+                 roi_key: str | None = None,
+                 bus: "InferenceBus | None" = None):
         super().__init__(daemon=True, name=f"worker-{cam_cfg['id']}")
+        self._bus = bus
 
         self.camera_id   = cam_cfg["id"]
         self.camera_name = cam_cfg.get("name", self.camera_id)
@@ -80,18 +87,23 @@ class CameraWorker(threading.Thread):
                                   enabled.get("luggage_roll",   False))
         needs_luggage_tracking = enabled.get("luggage_roll", False)
 
+        # Bus 模式：偵測器不載模型（GPU 推論由 InferenceBus 統一負責）
+        _bus_mode        = bus is not None
+        _person_path     = None if _bus_mode else model_cfg.get("person",  "models/fall_detection/yolo12l.pt")
+        _luggage_path    = None if _bus_mode else model_cfg.get("luggage", "models/luggage/yolo_luggage_best.pt")
+
         self._fall_det: FallDetector | None = None
         if needs_person:
             fd = feat_cfg.get("fall_detector", {})
             self._fall_det = FallDetector(
-                weight_path=model_cfg.get("person", "models/fall_detection/yolo12l.pt"),
+                weight_path=_person_path,
                 conf=det_cfg.get("conf", 0.4),
                 fallen_aspect_ratio=fd.get("fallen_aspect_ratio", 1.2),
                 alert_frames=fd.get("alert_frames", 5),
                 clahe=fd.get("clahe", True),
                 gamma=fd.get("gamma", 1.0),
                 imgsz=fd.get("imgsz", det_cfg.get("imgsz", 640)),
-                tracking=needs_person_tracking,
+                tracking=(needs_person_tracking and not _bus_mode),
             )
 
         self._luggage_det: LuggageDetector | None = None
@@ -99,18 +111,19 @@ class CameraWorker(threading.Thread):
             sc = feat_cfg.get("size_classifier", {})
             lr = feat_cfg.get("luggage_roll", {})
             self._luggage_det = LuggageDetector(
-                weight_path=model_cfg.get("luggage", "models/luggage/yolo_luggage_best.pt"),
+                weight_path=_luggage_path,
                 conf=det_cfg.get("conf", 0.4),
                 size_method=sc.get("size_method", "person_ratio"),
                 large_person_area_ratio=sc.get("large_person_area_ratio", 0.22),
                 max_match_distance_px=sc.get("max_match_distance_px",
                                              lr.get("max_match_distance_px", 400)),
                 large_area_ratio=sc.get("large_area_ratio", 0.01),
-                tracking=needs_luggage_tracking,
+                tracking=(needs_luggage_tracking and not _bus_mode),
             )
 
         self._pose_det: PoseDetector | None = None
-        if enabled.get("fall_detector"):
+        if enabled.get("fall_detector") and not _bus_mode:
+            # Pose 補位只在直接模式使用；Bus 模式跳過（效能考量）
             pf = feat_cfg.get("fall_detector", {}).get("pose_fallback", {})
             if pf.get("enabled", False):
                 self._pose_det = PoseDetector(
@@ -124,16 +137,24 @@ class CameraWorker(threading.Thread):
 
         self._fire_det: FireSmokeDetector | None = None
         if enabled.get("fire_smoke"):
-            fire_path = model_cfg.get("fire_smoke", "")
-            if not Path(fire_path).exists():
-                log("WARN", f"[{self.camera_id}] fire_smoke 模型不存在，略過: {fire_path}")
-            else:
-                fs = feat_cfg.get("fire_smoke", {})
+            fs = feat_cfg.get("fire_smoke", {})
+            if _bus_mode:
+                # Bus 模式：建立解析器（無模型），fire inference 由 InferenceBus 負責
                 self._fire_det = FireSmokeDetector(
-                    weight_path=fire_path,
+                    weight_path=None,
                     conf=fs.get("conf", 0.5),
                     alert_frames=fs.get("alert_frames", 3),
                 )
+            else:
+                fire_path = model_cfg.get("fire_smoke", "")
+                if not Path(fire_path).exists():
+                    log("WARN", f"[{self.camera_id}] fire_smoke 模型不存在，略過: {fire_path}")
+                else:
+                    self._fire_det = FireSmokeDetector(
+                        weight_path=fire_path,
+                        conf=fs.get("conf", 0.5),
+                        alert_frames=fs.get("alert_frames", 3),
+                    )
 
         # ── 功能模組 ─────────────────────────────────────────────────────────
         self._dwell_mon: DwellMonitor | None = None
@@ -175,6 +196,10 @@ class CameraWorker(threading.Thread):
         self._fps_frames:  int   = 0    # 1 秒滾動視窗計數
         self._fps_t0:      float = 0.0
         self._fps_log_n:   int   = 0    # 每 10 秒輸出一次 log
+        # 計時診斷（視窗平均）
+        self._diag_read_sum:  float = 0.0
+        self._diag_infer_sum: float = 0.0
+        self._diag_n:         int   = 0
         self.source_failed: bool = False                  # RTSP + fallback 均失敗
         self._last_annotated: np.ndarray | None = None   # skip-frame cache
         # 最近 5 筆告警，deque 在 CPython append 操作是 thread-safe
@@ -212,7 +237,10 @@ class CameraWorker(threading.Thread):
                     f"skip={self._skip} 功能=[{active}]")
 
         while not self._stop_event.is_set():
+            t_read0 = time.time()
             ret, frame = self._reader.read()
+            t_read1 = time.time()
+
             if not ret:
                 if is_file:
                     log("INFO", f"[{self.camera_id}] 影片結束")
@@ -222,19 +250,27 @@ class CameraWorker(threading.Thread):
                 break
 
             self._frame_n += 1
+            read_ms = (t_read1 - t_read0) * 1000.0
 
             if self._frame_n % self._skip == 0:
                 # Inference frame: run detection + draw + write to file
+                t_inf0 = time.time()
                 annotated = self._process(frame)
+                infer_ms = (time.time() - t_inf0) * 1000.0
                 self._last_annotated = annotated
                 if self._writer is not None:
                     self._writer.write(annotated)
+                self._diag_infer_sum += infer_ms
             else:
                 # Skip frame: display only（不寫入影片，避免重複幀造成慢動作）
+                infer_ms = 0.0
                 if self._last_annotated is not None:
                     annotated = self._last_annotated
                 else:
                     annotated = frame
+
+            self._diag_read_sum += read_ms
+            self._diag_n += 1
 
             # ── 1 秒滾動視窗 FPS（穩定、無逐幀抖動）────────────────────────
             now = time.time()
@@ -248,8 +284,13 @@ class CameraWorker(threading.Thread):
                 self._fps_t0 = now
                 self._fps_log_n += 1
                 if self._fps_log_n % 5 == 0:    # 每 5 秒 log 一次
+                    avg_read  = self._diag_read_sum  / max(1, self._diag_n)
+                    avg_infer = self._diag_infer_sum / max(1, self._diag_n)
                     log("INFO", f"[{self.camera_id}] [{self._mode}] "
-                                f"fps={self.fps:.1f} skip={self._skip}")
+                                f"fps={self.fps:.1f} skip={self._skip} "
+                                f"read={avg_read:.0f}ms infer={avg_infer:.0f}ms")
+                    self._diag_read_sum = self._diag_infer_sum = 0.0
+                    self._diag_n = 0
 
             try:
                 self._queue.put_nowait((self.camera_id, annotated, self.fps))
@@ -262,19 +303,45 @@ class CameraWorker(threading.Thread):
 
     def _process(self, frame: np.ndarray) -> np.ndarray:
         annotated = frame.copy()
+        h, w = frame.shape[:2]
 
-        # Step 1：在 clean frame 偵測（ROI overlay 不影響模型輸入）
-        all_persons: list[dict] = []
-        if self._fall_det is not None:
-            all_persons = self._fall_det.detect(frame)
+        # Step 1：偵測（Bus 批次路徑 or 直接推論路徑）
+        if self._bus is not None:
+            # ── Bus 模式：前處理 → 提交幀 → 等 batch 推論結果 ────────────
+            preprocessed = (self._fall_det.preprocess(frame)
+                            if self._fall_det else frame)
+            future = self._bus.submit(self.camera_id, preprocessed, frame)
+            try:
+                raw = future.result(timeout=2.0)
+            except Exception as e:
+                log("WARN", f"[{self.camera_id}] InferenceBus 推論超時/失敗: {e}")
+                raw = {"person": None, "luggage": None, "fire": None}
 
-        all_luggage: list[dict] = []
-        if self._luggage_det is not None:
-            all_luggage = self._luggage_det.detect(frame, persons=all_persons)
+            all_persons: list[dict] = (
+                self._fall_det.parse_result(raw["person"])
+                if self._fall_det and raw.get("person") is not None else []
+            )
+            all_luggage: list[dict] = (
+                self._luggage_det.parse_result(raw["luggage"], h, w, all_persons)
+                if self._luggage_det and raw.get("luggage") is not None else []
+            )
+            all_fire_smoke: list[dict] = []
+            if (self._fire_det and raw.get("fire") is not None
+                    and self._roi.has_roi_for_feature("fire_smoke")):
+                all_fire_smoke = self._fire_det.parse_result(raw["fire"])
+        else:
+            # ── 直接模式（向下相容，無 Bus）────────────────────────────────
+            all_persons = []
+            if self._fall_det is not None:
+                all_persons = self._fall_det.detect(frame)
 
-        all_fire_smoke: list[dict] = []
-        if self._fire_det is not None and self._roi.has_roi_for_feature("fire_smoke"):
-            all_fire_smoke = self._fire_det.detect(frame)
+            all_luggage = []
+            if self._luggage_det is not None:
+                all_luggage = self._luggage_det.detect(frame, persons=all_persons)
+
+            all_fire_smoke = []
+            if self._fire_det is not None and self._roi.has_roi_for_feature("fire_smoke"):
+                all_fire_smoke = self._fire_det.detect(frame)
 
         # Step 2：各功能使用各自 ROI 過濾
         #  - 有對應 ROI → 在 ROI 內的偵測結果

@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.utils import load_yaml, log
 from src.roi.roi_manager import has_roi_record, draw_roi_interactive, save_roi_record
 from src.pipeline.camera_worker import CameraWorker
+from src.inference.inference_bus import InferenceBus
 
 
 def _is_rtsp_url(url: str) -> bool:
@@ -319,6 +320,9 @@ def main():
         ensure_roi(cam, RECORDS_PATH, reset=(cam["id"] in reset_ids),
                    use_rtsp=use_rtsp_per_cam[cam["id"]])
 
+    # ── InferenceBus：共用 GPU 推論（Level 2+3 優化）──────────────────────
+    bus = InferenceBus(cameras=cameras, cfg=cfg)
+
     frame_queues = {cam["id"]: queue.Queue(maxsize=4) for cam in cameras}
     workers: list[CameraWorker] = []
 
@@ -331,7 +335,8 @@ def main():
         w = CameraWorker(cam_cfg=cam, global_cfg=cfg, source=src,
                          mode=args.mode, records_path=RECORDS_PATH,
                          roi_key=roi_k,
-                         frame_queue=frame_queues[cid])
+                         frame_queue=frame_queues[cid],
+                         bus=bus)
         w.start()
         workers.append(w)
 

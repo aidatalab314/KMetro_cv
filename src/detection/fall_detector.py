@@ -9,20 +9,19 @@ class FallDetector:
     """
     以 YOLO12l 通用偵測器偵測 person 類別，
     判斷邏輯：人體 bbox 寬 > 高（橫倒）且持續 alert_frames 幀。
-    參考：github.com/freedomwebtech/person_fall_detection
 
-    tracking=True 時使用 ByteTrack（ultralytics 內建），
-    偵測結果額外帶 track_id 欄位（-1 表示尚未指派）。
+    weight_path=None：Bus 模式，不載模型；僅提供 preprocess() 與 parse_result()。
+    tracking=True  ：使用 ByteTrack（直接模式時生效；Bus 模式追蹤由 InferenceBus 處理）。
     """
 
     PERSON_CLASS = 0   # COCO class index for person
 
-    def __init__(self, weight_path: str = "models/fall_detection/yolo12l.pt",
+    def __init__(self, weight_path: str | None = "models/fall_detection/yolo12l.pt",
                  conf: float = 0.5, fallen_aspect_ratio: float = 1.2,
                  alert_frames: int = 5, clahe: bool = True,
                  gamma: float = 1.0, imgsz: int = 640,
                  tracking: bool = False):
-        self.model = YOLO(weight_path)
+        self.model = YOLO(weight_path) if weight_path else None
         self.conf = conf
         self.fallen_aspect_ratio = fallen_aspect_ratio
         self._history: deque[int] = deque(maxlen=alert_frames)
@@ -30,7 +29,6 @@ class FallDetector:
         self.imgsz = imgsz
         self._tracking = tracking
         self._clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)) if clahe else None
-        # gamma < 1 提亮暗部（0.5 = sqrt），gamma=1 不做任何處理
         self._gamma_lut = self._build_gamma_lut(gamma) if gamma != 1.0 else None
 
     @staticmethod
@@ -38,7 +36,8 @@ class FallDetector:
         return np.array([(i / 255.0) ** gamma * 255 for i in range(256)],
                         dtype=np.uint8)
 
-    def _preprocess(self, frame: np.ndarray) -> np.ndarray:
+    def preprocess(self, frame: np.ndarray) -> np.ndarray:
+        """CLAHE + Gamma 前處理（Bus 模式在 submit 前呼叫）。"""
         if self._gamma_lut is not None:
             frame = cv2.LUT(frame, self._gamma_lut)
         if self._clahe is not None:
@@ -53,12 +52,29 @@ class FallDetector:
         h = y2 - y1
         return h > 0 and (w / h) >= self.fallen_aspect_ratio
 
+    def parse_result(self, result) -> list[dict]:
+        """從單個 ultralytics Results 物件解析偵測結果（Bus 模式使用）。"""
+        if result is None or result.boxes is None:
+            return []
+        detections = []
+        for box in result.boxes:
+            if int(box.cls[0]) != self.PERSON_CLASS:
+                continue
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            track_id = int(box.id[0]) if box.id is not None else -1
+            detections.append({
+                "bbox":     (x1, y1, x2, y2),
+                "conf":     float(box.conf[0]),
+                "fallen":   self._is_fallen(x1, y1, x2, y2),
+                "cx":       (x1 + x2) // 2,
+                "cy":       (y1 + y2) // 2,
+                "track_id": track_id,
+            })
+        return detections
+
     def detect(self, frame: np.ndarray) -> list[dict]:
-        """
-        偵測全幀所有 person，不更新 alert 歷史（交由 compute_alert 處理）。
-        tracking=True 時使用 ByteTrack，結果含 track_id（-1 = 未指派）。
-        """
-        processed = self._preprocess(frame)
+        """直接推論（非 Bus 模式，向下相容）。"""
+        processed = self.preprocess(frame)
         if self._tracking:
             results = self.model.track(processed, conf=self.conf, imgsz=self.imgsz,
                                        verbose=False, tracker="bytetrack.yaml",
@@ -66,29 +82,10 @@ class FallDetector:
         else:
             results = self.model(processed, conf=self.conf,
                                  imgsz=self.imgsz, verbose=False)
-
-        detections = []
+        dets = []
         for r in results:
-            if r.boxes is None:
-                continue
-            for box in r.boxes:
-                if int(box.cls[0]) != self.PERSON_CLASS:
-                    continue
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                conf = float(box.conf[0])
-                fallen = self._is_fallen(x1, y1, x2, y2)
-                track_id = (int(box.id[0])
-                            if self._tracking and box.id is not None
-                            else -1)
-                detections.append({
-                    "bbox":     (x1, y1, x2, y2),
-                    "conf":     conf,
-                    "fallen":   fallen,
-                    "cx":       (x1 + x2) // 2,
-                    "cy":       (y1 + y2) // 2,
-                    "track_id": track_id,
-                })
-        return detections
+            dets.extend(self.parse_result(r))
+        return dets
 
     def compute_alert(self, detections: list[dict]) -> bool:
         """根據已過濾（ROI 內）的偵測結果更新歷史並回傳是否觸發警報。"""
