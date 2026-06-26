@@ -245,6 +245,8 @@ def draw_roi_interactive(source: str,
                 _redraw()
 
     cv2.namedWindow(win)
+    cv2.imshow(win, cv2.resize(original, None, fx=scale, fy=scale))
+    cv2.waitKey(1)
     cv2.setMouseCallback(win, _mouse)
     _redraw()
 
