@@ -88,7 +88,7 @@ def ensure_roi(cam_cfg: dict, records_path: str, reset: bool = False,
         log("ROI", f"{camera_id}（{src_type}）{action}  [key={key}]")
         source  = (cam_cfg["source"] if use_rtsp
                    else cam_cfg.get("fallback") or cam_cfg["source"])
-        title = f"{cam_cfg.get('name', camera_id)}  [{src_type}]"
+        title = f"{camera_id}  [{src_type}]"
         try:
             rois = draw_roi_interactive(str(source),
                                         enabled_features=None,   # 永遠顯示全部功能
