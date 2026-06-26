@@ -370,6 +370,7 @@ def main():
     last_frames: dict[str, tuple] = {}
     mosaic_writer: cv2.VideoWriter | None = None
     mosaic_next_t: float = 0.0   # 下一次寫幀的時間戳
+    _win_initialized = False
 
     try:
         while True:
@@ -412,6 +413,10 @@ def main():
                     mosaic_writer.write(mosaic)
                     mosaic_next_t += 1.0 / mosaic_fps
 
+            if not _win_initialized:
+                cv2.namedWindow(win_title, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(win_title, 1280, 720)
+                _win_initialized = True
             cv2.imshow(win_title, mosaic)
 
             key = cv2.waitKey(1) & 0xFF
