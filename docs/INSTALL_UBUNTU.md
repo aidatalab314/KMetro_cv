@@ -9,8 +9,11 @@
 |------|----------|----------|
 | Ubuntu | 24.04 LTS | 24.04 |
 | NVIDIA Driver | 580.x | 570+ (open kernel) |
-| CUDA | 13.0 | 12.8+ |
+| CUDA Toolkit (`nvcc`) | 12.8 | 12.8+ |
 | GPU | RTX 5060 (sm_120) | Blackwell (sm_120) |
+
+> **`nvidia-smi` 顯示的 CUDA Version（13.0）是驅動最高支援版本，不是 Toolkit 版本。**
+> 實際安裝的 CUDA Toolkit 版本由 `nvcc --version` 確認。
 
 ---
 
@@ -18,7 +21,7 @@
 
 1. [系統需求確認](#1-系統需求確認)
 2. [NVIDIA 驅動程式](#2-nvidia-驅動程式)
-3. [CUDA Toolkit 13.0](#3-cuda-toolkit-130)
+3. [CUDA Toolkit 12.8](#3-cuda-toolkit-128)
 4. [cuDNN](#4-cudnn)
 5. [GStreamer（RTSP 解碼）](#5-gstreamer)
 6. [Python 環境（venv）](#6-python-環境venv)
@@ -77,11 +80,11 @@ nvidia-smi
 
 ---
 
-## 3. CUDA Toolkit 13.0
+## 3. CUDA Toolkit 12.8
 
-RTX 5060（sm_120）需要 **CUDA 12.8 以上**。測試環境為 CUDA 13.0。
+RTX 5060（sm_120）需要 **CUDA 12.8 以上**。測試環境為 CUDA Toolkit 12.8（Driver 580）。
 
-> **已有 CUDA Toolkit 的機器可跳至步驟 3c（環境變數設定）**
+> **已有 CUDA Toolkit 的機器（`nvcc --version` 回傳 12.8+）可跳至步驟 3c**
 
 ### 3a. 加入 NVIDIA 套件庫
 
@@ -94,26 +97,22 @@ sudo apt update
 ### 3b. 安裝 CUDA Toolkit
 
 ```bash
-# CUDA 13.0（測試確認版本）
-sudo apt install -y cuda-toolkit-13-0
-
-# 若 13.0 尚未在套件庫，改裝最新可用版（12.8 以上皆可）
-# sudo apt install -y cuda-toolkit-12-8
+# CUDA 12.8（測試確認版本）
+sudo apt install -y cuda-toolkit-12-8
 ```
 
 ### 3c. 設定環境變數
 
 ```bash
-# 確認實際安裝路徑
+# 確認實際安裝路徑（應看到 cuda-12.8）
 ls /usr/local/ | grep cuda
 
-# 依實際版本設定（範例為 13.0）
-CUDA_VER=13.0
-echo "export PATH=/usr/local/cuda-${CUDA_VER}/bin:\$PATH" >> ~/.bashrc
-echo "export LD_LIBRARY_PATH=/usr/local/cuda-${CUDA_VER}/lib64:\$LD_LIBRARY_PATH" >> ~/.bashrc
+# 設定 PATH（依 nvcc --version 的實際版本調整）
+echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
 
-# 確認
+# 確認（應顯示 release 12.8）
 nvcc --version
 ```
 
