@@ -247,7 +247,7 @@ class CameraWorker(threading.Thread):
                 self._fps_frames = 0
                 self._fps_t0 = now
                 self._fps_log_n += 1
-                if self._fps_log_n % 10 == 0:   # 每 10 秒 log 一次
+                if self._fps_log_n % 5 == 0:    # 每 5 秒 log 一次
                     log("INFO", f"[{self.camera_id}] [{self._mode}] "
                                 f"fps={self.fps:.1f} skip={self._skip}")
 

@@ -33,4 +33,4 @@ def now_str() -> str:
 
 
 def log(level: str, msg: str):
-    print(f"[{now_str()}] [{level}] {msg}")
+    print(f"[{now_str()}] [{level}] {msg}", flush=True)
