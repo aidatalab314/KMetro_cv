@@ -110,11 +110,14 @@ class RTSPReader:
                 cap.release()
             log("WARN", f"{label}: GStreamer 不可用，改用 FFmpeg: {src}")
 
-        self.cap = cv2.VideoCapture(src)
+        if _is_rtsp_source(src):
+            self.cap = cv2.VideoCapture(str(src), cv2.CAP_FFMPEG)
+        else:
+            self.cap = cv2.VideoCapture(src)
         if self.cap.isOpened():
             self.active_source = src
             if _is_rtsp_source(src):
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3)
             log("INFO", f"已開啟 {label}: {src}")
             return True
 
