@@ -13,6 +13,7 @@ build/
 .eggs/
 .env
 .venv
+kmetro/
 env/
 venv/
 

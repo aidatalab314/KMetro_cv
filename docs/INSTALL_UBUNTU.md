@@ -185,19 +185,23 @@ sudo apt install -y python3-venv python3-dev python3-pip
 ```bash
 cd ~/KMetro_cv
 
-# 建立 .venv（已在 .gitignore 排除）
-python3 -m venv .venv
+# 建立 kmetro venv（已在 .gitignore 排除）
+python3 -m venv kmetro
 
 # 啟動（後續所有 pip / python 指令都在啟動後執行）
-source .venv/bin/activate
+source kmetro/bin/activate
 
 # 確認 Python 版本
 python --version
 # Python 3.12.x
 ```
 
-> **每次開新 terminal 都需要執行** `source ~/KMetro_cv/.venv/bin/activate`
-> 建議加入 alias：`echo "alias kmetro='source ~/KMetro_cv/.venv/bin/activate'" >> ~/.bashrc`
+> **每次開新 terminal 都需要執行** `source ~/KMetro_cv/kmetro/bin/activate`
+> 建議加入 alias，之後只要打 `kmetro` 即可啟動：
+> ```bash
+> echo "alias kmetro='source ~/KMetro_cv/kmetro/bin/activate'" >> ~/.bashrc
+> source ~/.bashrc
+> ```
 
 ### 6.3 PyTorch
 
@@ -276,26 +280,26 @@ GStreamer 為 NO 時，需從原始碼編譯（見附錄 A）。
 本專案使用 **Git LFS** 儲存模型權重（`.pt`），clone 前需先安裝 git-lfs。
 
 ```bash
-# 安裝 git-lfs
-sudo apt install git-lfs
+# 安裝必要套件
+sudo apt install -y git git-lfs python3-venv python3-dev python3-pip
 git lfs install
 
-# Clone（LFS 物件會一併下載）
+# Clone（LFS 物件會一併下載，應看到 Filtering content: ~56MB）
 git clone https://github.com/aidatalab314/KMetro_cv.git ~/KMetro_cv
-cd ~/KMetro_cv
 
-# 確認模型已下載（不是 LFS pointer 文字檔）
+# ⚠️ 必須 cd 進專案目錄再確認檔案
+cd ~/KMetro_cv
 ls -lh models/fall_detection/yolo12l.pt       # 應約 51MB
 ls -lh models/luggage/yolo_luggage_best.pt    # 應約 5.2MB
 
 # 建立 venv（接續第 6 節）
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv kmetro
+source kmetro/bin/activate
 ```
 
 > **若已 clone 但 .pt 是 pointer 文字（幾百 bytes）**：
 > ```bash
-> git lfs pull
+> cd ~/KMetro_cv && git lfs pull
 > ```
 
 ---
@@ -306,7 +310,7 @@ source .venv/bin/activate
 
 ```bash
 cd ~/KMetro_cv
-source .venv/bin/activate
+source kmetro/bin/activate
 
 python - <<'EOF'
 from ultralytics import YOLO
@@ -363,7 +367,7 @@ output:
 
 ```bash
 cd ~/KMetro_cv
-source .venv/bin/activate
+source kmetro/bin/activate
 
 # 1. CUDA + GPU
 python -c "import torch; assert torch.cuda.is_available(); print('GPU OK:', torch.cuda.get_device_name(0))"
@@ -397,7 +401,7 @@ timeout 10 python src/pipeline/multistream.py --mode op --cameras cam_platform_n
 
 ```bash
 cd ~/KMetro_cv
-source .venv/bin/activate
+source kmetro/bin/activate
 
 # auto 模式（探測 RTSP，不可達則 fallback 本地影片）
 python src/pipeline/multistream.py
@@ -448,11 +452,14 @@ pip uninstall opencv-python -y
 | 問題 | 原因 | 解法 |
 |------|------|------|
 | `nvidia-smi` 正常但 `torch.cuda.is_available()` 為 False | PyTorch wheel 與 Driver 不符 | 確認安裝 `cu128`（或更新）build；`--index-url .../cu128` |
-| `nvidia-smi` 顯示 CUDA 13.0，torch.version.cuda 顯示 12.8 | 正常現象 | `nvidia-smi` 顯示驅動最高支援版本；PyTorch 使用自帶 runtime，兩者無衝突 |
+| `nvidia-smi` 顯示 CUDA 13.0，`nvcc` 顯示 12.8 | 正常現象 | `nvidia-smi` 顯示驅動最高支援版本；實際 Toolkit 版本以 `nvcc --version` 為準 |
 | TensorRT export 失敗：`sm_120 not supported` | TensorRT 版本太舊 | 升級至 TensorRT 10.x（`pip install --upgrade tensorrt`） |
 | GStreamer RTSP 失敗，但 FFmpeg 可以 | `avdec_h264/h265` 未安裝 | `sudo apt install gstreamer1.0-libav` |
+| GStreamer 測試出現 `Generic error` | 使用了假 URL（user:pass@ip） | 換成實際攝影機 IP 和帳密 |
 | `nvv4l2decoder` 錯誤訊息出現 | Jetson 專屬元件，Ubuntu 正常觸發 | 可忽略，程式自動 fallback 到 avdec |
-| `.pt` 只有幾百 bytes | git-lfs 未啟用就 clone | `git lfs install && git lfs pull` |
-| `pip install` 後 `import` 失敗 | venv 未啟動 | `source ~/KMetro_cv/.venv/bin/activate` |
+| `ls models/...` 找不到檔案 | 在 `~` 而非專案目錄執行 | 先 `cd ~/KMetro_cv` 再操作 |
+| `.pt` 只有幾百 bytes | clone 前未執行 `git lfs install` | `cd ~/KMetro_cv && git lfs pull` |
+| `pip install` 後 `import` 失敗 | venv 未啟動 | `source ~/KMetro_cv/kmetro/bin/activate` 或直接打 `kmetro` |
+| alias `kmetro` 無效 | 直接在 shell 賦值而非寫入 `.bashrc` | `echo "alias kmetro='source ~/KMetro_cv/kmetro/bin/activate'" >> ~/.bashrc && source ~/.bashrc` |
 | ROI 視窗無法顯示（headless server）| 無 X display | 加 `--mode op` 改用 headless |
 | cuDNN apt 套件找不到 | 套件名隨 CUDA 版本變 | `apt-cache search cudnn` 確認可用版本後安裝 |
