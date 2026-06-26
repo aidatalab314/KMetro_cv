@@ -1,6 +1,10 @@
+import os
 import cv2
 from pathlib import Path
 from src.utils import log
+
+# FFmpeg RTSP fallback：強制 TCP 傳輸，減少 UDP 封包遺失造成的畫面 artifact
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
 
 
 def _is_file_source(src) -> bool:

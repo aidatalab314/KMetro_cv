@@ -175,21 +175,22 @@ def make_panel(frame: np.ndarray, worker: CameraWorker,
                panel_h: int) -> np.ndarray:
     """
     建立單路攝影機 panel：告警列 + 縮放影像 + 資訊列。
-    panel 寬度由影像長寬比決定。
+    固定寬度 = panel_h * 16/9，與 waiting/nosource panel 一致，mosaic 格子均等。
+    非 16:9 來源以 letterbox 置中填入。
     """
+    pw        = int(panel_h * 16 / 9)
     content_h = panel_h - _ALERT_H - _INFO_H
-    h, w = frame.shape[:2]
-    scale = content_h / h
-    cw    = max(1, int(w * scale))
+    h, w      = frame.shape[:2]
+    scale     = min(pw / w, content_h / h)
+    sw, sh    = max(1, int(w * scale)), max(1, int(h * scale))
 
-    panel = np.zeros((panel_h, cw, 3), np.uint8)
+    panel  = np.zeros((panel_h, pw, 3), np.uint8)
+    scaled = cv2.resize(frame, (sw, sh))
+    x_off  = (pw - sw) // 2
+    panel[_ALERT_H: _ALERT_H + sh, x_off: x_off + sw] = scaled
 
-    # 縮放影像置入中間區域
-    scaled = cv2.resize(frame, (cw, content_h))
-    panel[_ALERT_H: _ALERT_H + content_h] = scaled
-
-    _draw_alert_bar(panel, worker, cw)
-    _draw_info_bar(panel, worker, cw, panel_h)
+    _draw_alert_bar(panel, worker, pw)
+    _draw_info_bar(panel, worker, pw, panel_h)
 
     return panel
 
