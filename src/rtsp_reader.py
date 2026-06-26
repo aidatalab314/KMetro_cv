@@ -101,7 +101,8 @@ class RTSPReader:
             self.cap.release()
 
         if _is_rtsp_source(src):
-            for hw_accel, decode_label in ((True, "HW nvv4l2"), (False, "SW avdec_h265")):
+            # SW 先試（avdec 初始化快 <1s）；HW nvv4l2 作後備（初始化慢但解碼效率佳）
+            for hw_accel, decode_label in ((False, "SW avdec"), (True, "HW nvv4l2")):
                 gst_pipe = _build_gst_rtsp_pipeline(str(src), hw_accel=hw_accel)
                 cap = cv2.VideoCapture(gst_pipe, cv2.CAP_GSTREAMER)
                 if cap.isOpened():
