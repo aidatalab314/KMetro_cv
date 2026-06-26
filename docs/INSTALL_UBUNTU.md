@@ -25,10 +25,10 @@
 4. [cuDNN](#4-cudnn)
 5. [GStreamer（RTSP 解碼）](#5-gstreamer)
 6. [Python 環境（venv）](#6-python-環境venv)
-7. [OpenCV 驗證](#7-opencv-驗證)
+7. [OpenCV（含 GStreamer 支援）](#7-opencv含-gstreamer-支援)
 8. [專案取得（git clone + LFS）](#8-專案取得)
 9. [TensorRT 模型匯出](#9-tensorrt-模型匯出)
-10. [cameras.local.yaml 設定](#10-cameraslocal-yaml)
+10. [cameras.local.yaml 設定（雙機開發）](#10-cameraslocal-yaml-設定雙機開發)
 11. [完整驗證清單](#11-完整驗證清單)
 12. [啟動](#12-啟動)
 
@@ -156,17 +156,22 @@ sudo apt install -y \
   libgstreamer-plugins-base1.0-dev
 ```
 
-驗證（需替換為實際 RTSP 位址）：
+驗證（替換為實際 RTSP 位址）：
 
 ```bash
-# H.264
-gst-launch-1.0 rtspsrc location="rtsp://user:pass@ip/stream" latency=0 ! \
+# H.264 — protocols=tcp 避免 UDP 封包遺失；location 必須加引號（含 @ / 字元）
+gst-launch-1.0 rtspsrc location="rtsp://user:pass@ip/stream" \
+  latency=0 protocols=tcp ! \
   rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! fakesink
 
 # H.265
-gst-launch-1.0 rtspsrc location="rtsp://user:pass@ip/stream" latency=0 ! \
+gst-launch-1.0 rtspsrc location="rtsp://user:pass@ip/stream" \
+  latency=0 protocols=tcp ! \
   rtph265depay ! h265parse ! avdec_h265 ! videoconvert ! fakesink
 ```
+
+> **codec 自動判斷規則**：URL 含 `h265/265/hevc` → H.265，其餘預設 H.264。
+> `rtsp_reader.py` 先嘗試 GStreamer SW（avdec，< 1s），再嘗試 HW（nvv4l2）。
 
 ---
 
@@ -259,19 +264,23 @@ print('TensorRT  :', tensorrt.__version__)
 
 ---
 
-## 7. OpenCV 驗證
+## 7. OpenCV（含 GStreamer 支援）
 
-`pip install opencv-python` 在 Linux 上通常已含 GStreamer。若結果為 NO：
+Ubuntu 24.04 的 pip `opencv-python` 以 NumPy **1.x** 編譯，但 venv 內裝的是 NumPy 2.x，
+執行時會出現 ABI 錯誤：`A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x`。
+
+**解法：從原始碼編譯 OpenCV**（詳見附錄 A），編譯後以 `.pth` 掛入 venv。
+
+快速確認（附錄 A 完成後才跑）：
 
 ```bash
 python -c "
 import cv2
-info = cv2.getBuildInformation()
-print('GStreamer:', 'YES' if 'GStreamer: YES' in info else 'NO')
+gst = cv2.getBuildInformation().split('GStreamer:')[1].split('\n')[0].strip()
+print('OpenCV:', cv2.__version__, '| GStreamer:', gst)
 "
+# 預期：OpenCV: 4.11.0 | GStreamer:  YES (1.24.2)
 ```
-
-GStreamer 為 NO 時，需從原始碼編譯（見附錄 A）。
 
 ---
 
@@ -334,20 +343,23 @@ ls -lh models/fall_detection/*.engine models/luggage/*.engine
 
 ---
 
-## 10. cameras.local.yaml 設定
+## 10. cameras.local.yaml 設定（雙機開發）
+
+`cameras.local.yaml` 已加入 `.gitignore`，**不進版控**。Mac 和 Ubuntu 各自維護，
+`git pull` 不會互相覆蓋，可安心在兩台機器之間來回同步程式碼。
 
 ```bash
 cp configs/cameras.local.yaml.example configs/cameras.local.yaml
 ```
 
-編輯 `configs/cameras.local.yaml`，填入 Ubuntu CUDA 設定：
+Ubuntu 的 `cameras.local.yaml` 填入 CUDA + RTSP 設定：
 
 ```yaml
-# Ubuntu x86 + GeForce RTX — 覆蓋設定
+# Ubuntu 24.04 + RTX 5060 — 覆蓋設定
 
 detector:
   device:       "0"      # CUDA GPU 0
-  skip_frames:  1        # TensorRT 夠快，不需跳幀；fps 不足可改 2
+  skip_frames:  1        # TensorRT 夠快；fps 不足可改 2
 
 models:
   person:     "models/fall_detection/yolo12l.engine"      # TensorRT FP16
@@ -355,11 +367,18 @@ models:
 
 output:
   save_video_rtsp: true
-  mosaic_fps:      25    # ⚠️ = source_fps ÷ skip_frames（25fps ÷ 1 = 25）
+  mosaic_fps:      30    # source_fps(30) ÷ skip_frames(1) = 30
 ```
 
-> 若 TensorRT engine 尚未匯出（第 9 步），先用 `.pt` 測試：直接不設 models 覆蓋，
-> 或設 `device: "cuda"` 讓 PyTorch 用 CUDA 推論。
+**各平台啟動指令**：
+
+| 機器 | 指令 |
+|------|------|
+| Mac Mini（本地影片） | `python src/pipeline/multistream.py --source local` |
+| Ubuntu（RTSP 攝影機） | `python src/pipeline/multistream.py --source rtsp` |
+| 兩台都可（自動探測） | `python src/pipeline/multistream.py` |
+
+> 若 TensorRT engine 尚未匯出，暫時不設 `models` 覆蓋，PyTorch 會直接用 `.pt` + CUDA 推論。
 
 ---
 
@@ -421,28 +440,87 @@ python src/pipeline/multistream.py --source rtsp --reset-roi all
 
 ---
 
-## 附錄 A：從原始碼編譯 OpenCV（GStreamer 為 NO 時）
+## 附錄 A：從原始碼編譯 OpenCV 4.11.0（含 GStreamer）
+
+Ubuntu 24.04 + NumPy 2.x venv 的必要步驟。編譯後用 `.pth` 掛入 venv，不需重建 venv。
+
+### A.1 安裝編譯依賴
 
 ```bash
-sudo apt install -y cmake build-essential libgtk-3-dev pkg-config
+sudo apt install -y \
+  cmake build-essential pkg-config \
+  libgtk-3-dev libcanberra-gtk3-module \
+  libjpeg-dev libpng-dev libtiff-dev \
+  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+```
 
-git clone --depth 1 -b 4.10.0 https://github.com/opencv/opencv.git
+### A.2 Clone OpenCV 4.11.0
+
+```bash
+cd ~
+git clone --depth 1 -b 4.11.0 https://github.com/opencv/opencv.git
 cd opencv && mkdir build && cd build
+```
 
+### A.3 CMake 設定
+
+```bash
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DWITH_GSTREAMER=ON \
   -DWITH_CUDA=OFF \
   -DBUILD_opencv_python3=ON \
-  -DPYTHON_EXECUTABLE=$(which python) \
-  -DINSTALL_PYTHON_EXAMPLES=OFF
+  -DPYTHON_EXECUTABLE=$(python3 -c "import sys; print(sys.executable)") \
+  -DPYTHON3_INCLUDE_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('include'))") \
+  -DPYTHON3_PACKAGES_PATH=/usr/local/lib/python3.12/site-packages \
+  -DINSTALL_PYTHON_EXAMPLES=OFF \
+  -DBUILD_EXAMPLES=OFF \
+  -DBUILD_TESTS=OFF \
+  -DBUILD_PERF_TESTS=OFF
+```
 
-make -j$(nproc)
+### A.4 編譯與安裝
+
+```bash
+make -j$(nproc)     # 約 10–20 分鐘
 sudo make install
+sudo ldconfig
+```
 
-# 重新安裝 venv 內的 opencv（指向系統編譯版）
-pip uninstall opencv-python -y
-# 系統 site-packages 路徑需加入 venv 或改用 --system-site-packages 建立 venv
+確認安裝位置：
+
+```bash
+python3 -c "import sys; sys.path.insert(0, '/usr/local/lib/python3.12/site-packages'); import cv2; print(cv2.__version__)"
+# 應顯示 4.11.0
+```
+
+### A.5 掛入 venv（.pth 方式）
+
+venv 內的 `cv2/` stub 會優先蓋掉系統安裝。先移除 stub，再加 `.pth` 讓 venv 找到系統版本：
+
+```bash
+cd ~/KMetro_cv
+source kmetro/bin/activate
+
+SITE=$(python -c "import site; print(site.getsitepackages()[0])")
+
+# 移除 venv 內的 opencv stub（若存在）
+pip uninstall opencv-python -y 2>/dev/null || true
+rm -rf "$SITE/cv2"
+
+# 加入指向系統 site-packages 的 .pth
+echo "/usr/local/lib/python3.12/site-packages" > "$SITE/compiled-cv2.pth"
+```
+
+驗證：
+
+```bash
+python -c "
+import cv2
+gst = cv2.getBuildInformation().split('GStreamer:')[1].split('\n')[0].strip()
+print('OpenCV:', cv2.__version__, '| GStreamer:', gst)
+"
+# 預期：OpenCV: 4.11.0 | GStreamer:  YES (1.24.2)
 ```
 
 ---
@@ -453,13 +531,53 @@ pip uninstall opencv-python -y
 |------|------|------|
 | `nvidia-smi` 正常但 `torch.cuda.is_available()` 為 False | PyTorch wheel 與 Driver 不符 | 確認安裝 `cu128`（或更新）build；`--index-url .../cu128` |
 | `nvidia-smi` 顯示 CUDA 13.0，`nvcc` 顯示 12.8 | 正常現象 | `nvidia-smi` 顯示驅動最高支援版本；實際 Toolkit 版本以 `nvcc --version` 為準 |
-| TensorRT export 失敗：`sm_120 not supported` | TensorRT 版本太舊 | 升級至 TensorRT 10.x（`pip install --upgrade tensorrt`） |
-| GStreamer RTSP 失敗，但 FFmpeg 可以 | `avdec_h264/h265` 未安裝 | `sudo apt install gstreamer1.0-libav` |
+| TensorRT export 失敗：`sm_120 not supported` | TensorRT 版本太舊 | 升級至 TensorRT 10.x+（`pip install --upgrade tensorrt`） |
+| `A module compiled using NumPy 1.x cannot be run in NumPy 2.x` | pip opencv 以 NumPy 1.x 編譯，venv 是 NumPy 2.x | 必須從原始碼編譯 OpenCV（附錄 A） |
+| GStreamer RTSP 失敗，但 `ffplay` 可以播放 | `avdec_h264/h265` 未安裝 | `sudo apt install gstreamer1.0-libav` |
+| GStreamer `udpsrc Internal data stream error` | rtspsrc 預設 UDP，封包遺失 | pipeline 加 `protocols=tcp`（程式碼已修正） |
 | GStreamer 測試出現 `Generic error` | 使用了假 URL（user:pass@ip） | 換成實際攝影機 IP 和帳密 |
-| `nvv4l2decoder` 錯誤訊息出現 | Jetson 專屬元件，Ubuntu 正常觸發 | 可忽略，程式自動 fallback 到 avdec |
+| `nvv4l2decoder` 錯誤訊息 | 第一個嘗試的 HW pipeline 失敗 | 可忽略，程式自動 fallback 到 SW（avdec），速度更快 |
+| `cv2.__file__` 回傳 None / 找到 venv stub | venv 內有 opencv stub 蓋掉系統安裝 | 執行附錄 A.5 的 `.pth` 修正步驟 |
 | `ls models/...` 找不到檔案 | 在 `~` 而非專案目錄執行 | 先 `cd ~/KMetro_cv` 再操作 |
 | `.pt` 只有幾百 bytes | clone 前未執行 `git lfs install` | `cd ~/KMetro_cv && git lfs pull` |
-| `pip install` 後 `import` 失敗 | venv 未啟動 | `source ~/KMetro_cv/kmetro/bin/activate` 或直接打 `kmetro` |
+| `pip install` 後 `import` 失敗 | venv 未啟動 | `source ~/KMetro_cv/kmetro/bin/activate` 或打 `kmetro` |
 | alias `kmetro` 無效 | 直接在 shell 賦值而非寫入 `.bashrc` | `echo "alias kmetro='source ~/KMetro_cv/kmetro/bin/activate'" >> ~/.bashrc && source ~/.bashrc` |
-| ROI 視窗無法顯示（headless server）| 無 X display | 加 `--mode op` 改用 headless |
+| SSH 執行 dev 模式出現 `qt.qpa.xcb: could not connect to display` | SSH session 無 DISPLAY 設定 | 見附錄 C |
+| ROI 視窗出現、但 setMouseCallback 失效（NULL handler） | 視窗名稱含非 ASCII 字元 | window name 已修正為純 ASCII，確認使用最新版 |
 | cuDNN apt 套件找不到 | 套件名隨 CUDA 版本變 | `apt-cache search cudnn` 確認可用版本後安裝 |
+
+---
+
+## 附錄 C：SSH 遠端連線顯示設定（Dev 模式）
+
+從 Mac SSH 連入 Ubuntu，要讓 OpenCV 視窗顯示在 Ubuntu 的實體螢幕上：
+
+```bash
+# Ubuntu 上先確認目前的 display session
+who
+# 範例輸出：lab314  :1  ...
+
+# 設定 DISPLAY（:1 對應 who 輸出的 display 號）
+export DISPLAY=:1
+export XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority
+
+# 驗證
+xdpyinfo -display :1 | head -3
+```
+
+建議加入 `~/.bashrc` 以免每次手動設定：
+
+```bash
+cat >> ~/.bashrc << 'EOF'
+
+# KMetro dev: SSH 連入時設定 Ubuntu 實體螢幕 display
+if [ -z "$DISPLAY" ]; then
+  export DISPLAY=:1
+  export XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority
+fi
+EOF
+source ~/.bashrc
+```
+
+> **Op 模式（`--mode op`）不需要 DISPLAY**，適合純 headless 推論。
+> Dev 模式才需要此設定（顯示四格 mosaic 視窗）。

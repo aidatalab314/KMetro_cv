@@ -2,70 +2,80 @@
 #
 # 使用方式：
 #   cp configs/cameras.local.yaml.example configs/cameras.local.yaml
+#   # 依目前機器取消對應平台的註解
+#
 # 此檔案已加入 .gitignore，不進版控。
-# utils.load_yaml() 會將 cameras.local.yaml 的值合併覆蓋 cameras.yaml。
+# git pull 不會覆蓋此檔案，兩台機器可各自維護獨立設定。
+# configs/cameras.yaml 的值為預設值；此檔案只需填寫「與預設不同」的部分。
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Jetson Orin（現場部署）
+# Mac Mini M1/M2（主要開發機）
+# cameras.yaml 預設即為 Mac 設定（device: mps）
+# 在家庭網路無法連到攝影機（192.168.6.x），改用本地測試影片
+# 啟動指令：python src/pipeline/multistream.py --source local
 # ══════════════════════════════════════════════════════════════════════════════
 # detector:
-#   device:       "0"       # CUDA GPU 0
-#   skip_frames:  1         # TensorRT 夠快，不需跳幀
-#
-# models:
-#   person:     "models/fall_detection/yolo12l.engine"     # TensorRT
-#   luggage:    "models/luggage/yolo_luggage_best.engine"  # TensorRT
-#   # fire_smoke 等模型取得後一併 export
+#   device:       "mps"
+#   skip_frames:  2
 #
 # output:
-#   save_video_rtsp: true   # 部署環境建議留存 RTSP 錄影
-#   mosaic_fps:      30     # skip_frames=1 → source_fps(30) ÷ 1 = 30
+#   save_video_rtsp:  false
+#   save_video_local: true
+#   mosaic_fps:       15    # source_fps(30) ÷ skip_frames(2) = 15
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Ubuntu 24.04 + GeForce RTX（實驗室機，192.168.6.20）
+# 啟動指令：python src/pipeline/multistream.py --source rtsp
+# ══════════════════════════════════════════════════════════════════════════════
+# detector:
+#   device:       "0"      # CUDA GPU 0
+#   skip_frames:  1        # TensorRT 夠快，不需跳幀；不足可改 2
+#
+# models:
+#   person:     "models/fall_detection/yolo12l.engine"      # TensorRT FP16
+#   luggage:    "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
+#
+# output:
+#   save_video_rtsp: true
+#   mosaic_fps:      30    # source_fps(30) ÷ skip_frames(1) = 30
 #
 # features:
 #   fall_detector:
 #     pose_fallback:
-#       device: "0"         # RTMO 也用 CUDA（效能允許時才開 enabled: true）
+#       device: "0"        # RTMO 也用 CUDA（效能允許時才開 enabled: true）
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Mac M1/M2（開發機）
-# cameras.yaml 預設值即為 Mac 設定，通常不需要覆蓋
+# Jetson Orin（現場部署目標）
 # ══════════════════════════════════════════════════════════════════════════════
 # detector:
-#   device:      "mps"
-#   skip_frames: 2
-#
-# output:
-#   mosaic_fps:  15         # skip_frames=2 → source_fps(30) ÷ 2 = 15
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Ubuntu 24.04 + GeForce RTX（CUDA，TensorRT）
-# ══════════════════════════════════════════════════════════════════════════════
-# detector:
-#   device:      "0"        # CUDA GPU 0
-#   skip_frames: 1          # TensorRT 夠快不需跳幀；不足可改 2
+#   device:       "0"
+#   skip_frames:  1
 #
 # models:
-#   person:     "models/fall_detection/yolo12l.engine"    # TensorRT FP16
-#   luggage:    "models/luggage/yolo_luggage_best.engine" # TensorRT FP16
+#   person:     "models/fall_detection/yolo12l.engine"
+#   luggage:    "models/luggage/yolo_luggage_best.engine"
 #
 # output:
-#   save_video_rtsp: true   # 部署環境建議錄影存證
-#   mosaic_fps:      25     # 依 RTSP 來源 fps ÷ skip_frames（25fps ÷ 1 = 25）
+#   save_video_rtsp: true
+#   mosaic_fps:      30
 #
 # features:
 #   fall_detector:
 #     pose_fallback:
-#       device: "0"         # RTMO 也用 CUDA（效能允許時才開 enabled: true）
+#       device: "0"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Ubuntu x86（無 GPU 的純 CPU 測試機）
 # ══════════════════════════════════════════════════════════════════════════════
 # detector:
 #   device:      "cpu"
-#   skip_frames: 4          # CPU 較慢，多跳幀
-#   imgsz:       640        # 強制低解析度節省時間
+#   skip_frames: 4
+#   imgsz:       640
 #
 # output:
-#   save_video_local: false # CPU 測試不存影片
+#   save_video_local: false
 #   save_mosaic:      false
-#   mosaic_fps:       8     # skip_frames=4 → 30 ÷ 4 ≈ 8
+#   mosaic_fps:       8
