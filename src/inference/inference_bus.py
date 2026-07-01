@@ -242,7 +242,9 @@ class InferenceBus:
 
         if pred is not None and hasattr(pred, 'trackers'):
             saved = list(pred.trackers)
-            pred.trackers = list(tracker_cache[cam_idx])
+            # 空 cache = 此路第一次呼叫；設 None 讓 YOLO 重新初始化 tracker
+            # 非空 cache = 還原此路上次的 ByteTrack 狀態
+            pred.trackers = list(tracker_cache[cam_idx]) if tracker_cache[cam_idx] else None
 
         result = model.track(
             [frame], persist=True, tracker="bytetrack.yaml",
