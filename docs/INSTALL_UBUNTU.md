@@ -252,7 +252,7 @@ pip install "ultralytics[export]"
 跨攝影機滯留計時繼承功能需要 OSNet-ain 外觀特徵模型。
 
 ```bash
-pip install torchreid gdown
+pip install torchreid gdown tensorboard
 
 # 驗證（首次執行會自動下載 ~11MB checkpoint）
 python - <<'EOF'
@@ -383,7 +383,7 @@ cp configs/cameras.local.yaml.example configs/cameras.local.yaml
 Ubuntu 的 `cameras.local.yaml` 填入 CUDA + RTSP 設定：
 
 ```yaml
-# Ubuntu 24.04 + RTX 5060 — 覆蓋設定
+# Ubuntu 24.04 + RTX 5060（192.168.6.20）— 覆蓋設定
 
 detector:
   device:       "0"      # CUDA GPU 0
@@ -394,6 +394,8 @@ models:
   luggage:    "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
 
 features:
+  dwell_monitor:
+    alert_seconds: 5.0   # 測試期間縮短；驗證完成後改回 60.0
   fall_detector:
     imgsz: 640
 

@@ -219,9 +219,12 @@ python src/pipeline/multistream.py --reset-roi all
 
 ### 儲存格式（`configs/roi_records.json`）
 
+key 格式為 `{camera_id}_rtsp`（RTSP 模式）或 `{camera_id}_local`（本地影片模式），兩者互不覆蓋。
+此檔案已加入 `.gitignore`，各機器自行維護，不進版控。
+
 ```json
 {
-  "cam_platform_north": [
+  "cam_platform_north_rtsp": [
     {
       "id": "roi_0",
       "label": "ROI 0",
@@ -238,6 +241,7 @@ python src/pipeline/multistream.py --reset-roi all
       "full_frame": true,
       "points": [[0,0], [W,0], [W,H], [0,H]]
     }
-  ]
+  ],
+  "cam_platform_north_local": [...]
 }
 ```
