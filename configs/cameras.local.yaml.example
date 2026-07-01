@@ -29,7 +29,7 @@
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Ubuntu 24.04 + GeForce RTX 5060（推論機，實驗室 192.168.0.87）
+# Ubuntu 24.04 + GeForce RTX 5060（推論機，192.168.6.20）
 # 啟動指令：python src/pipeline/multistream.py --source rtsp --mode op
 # 前置：需先安裝 torchreid（pip install torchreid gdown tensorboard）
 # ══════════════════════════════════════════════════════════════════════════════
