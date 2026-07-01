@@ -160,13 +160,15 @@ class InferenceBus:
 
     # ── 推論方法 ──────────────────────────────────────────────────────────────
 
-    def _infer(self, pre_frames: list, ori_frames: list):
+    def _infer(self, pre_frames: list, ori_frames: list,
+               active_indices: "set[int] | None" = None):
         """
         嘗試 batch 推論；若 TRT engine 不支援目前 batch size 則自動切換至串行模式。
-        回傳 (pr_list, lr_list, fr_list)，各長度為 self._n。
+        active_indices：本 batch 有新幀的攝影機 index 集合；None = 全部。
+        回傳 (pr_list, lr_list, fr_list)，各長度為 self._n（非 active 項為 None）。
         """
         if self._seq_mode:
-            return self._infer_seq(pre_frames, ori_frames)
+            return self._infer_seq(pre_frames, ori_frames, active_indices)
 
         try:
             pr = self._person_model.track(
@@ -206,24 +208,30 @@ class InferenceBus:
                 return self._infer_seq(pre_frames, ori_frames)
             raise
 
-    def _infer_seq(self, pre_frames: list, ori_frames: list):
+    def _infer_seq(self, pre_frames: list, ori_frames: list,
+                   active_indices: "set[int] | None" = None):
         """
-        串行 batch=1 推論，逐路執行 model.track() 並隔離各路 ByteTrack 狀態。
-        保證 track_id 按攝影機正確延續（不互相污染）。
+        串行 batch=1 推論，只推論 active_indices 中有新幀的攝影機。
+        非 active 位置回傳 None（呼叫端 futures_map 不含這些攝影機，不會存取）。
+        ByteTrack 狀態透過 _track_one save/restore 隔離；跳過的攝影機靠
+        max_disappeared_frames 維持追蹤連續性（與 skip_frames 行為相同）。
         """
-        pr, lr, fr = [], [], []
-        for i in range(self._n):
-            pr.append(self._track_one(
+        targets = active_indices if active_indices is not None else set(range(self._n))
+        pr = [None] * self._n
+        lr = [None] * self._n
+        fr = [None] * self._n
+        for i in targets:
+            pr[i] = self._track_one(
                 self._person_model, pre_frames[i],
                 self._seq_person_trackers, i,
                 conf=self._person_conf, imgsz=self._person_imgsz, classes=[0],
-            ))
-            lr.append(self._track_one(
+            )
+            lr[i] = self._track_one(
                 self._luggage_model, ori_frames[i],
                 self._seq_luggage_trackers, i,
                 conf=self._luggage_conf, imgsz=self._luggage_imgsz,
-            ))
-            fr.append(
+            )
+            fr[i] = (
                 self._fire_model(
                     [ori_frames[i]], conf=self._fire_conf,
                     imgsz=self._fire_imgsz, verbose=False,
@@ -309,11 +317,11 @@ class InferenceBus:
                             fut.set_result({"person": None, "luggage": None, "fire": None})
                     continue
 
-            # ── batch 推論（3 模型串行，每次 N 路一起）──────────────────────
+            # ── batch 推論（串行，只推論本 batch 有新幀的攝影機）────────────
             try:
                 t_inf0 = time.time()
-
-                pr, lr, fr = self._infer(self._last_pre, self._last_orig)
+                active_indices = {i for i, _ in futures_map}
+                pr, lr, fr = self._infer(self._last_pre, self._last_orig, active_indices)
 
                 t_inf1 = time.time()
 
@@ -332,7 +340,7 @@ class InferenceBus:
                 if self._batch_count % 50 == 0:
                     avg_i = self._t_infer_sum / self._batch_count
                     avg_w = self._t_wait_sum  / self._batch_count
-                    mode  = "seq" if self._seq_mode else f"batch×{self._n}"
+                    mode  = f"seq×{len(active_indices)}" if self._seq_mode else f"batch×{self._n}"
                     log("INFO", f"[InferenceBus] batch#{self._batch_count}  "
                                 f"avg_infer={avg_i:.0f}ms  avg_wait={avg_w:.0f}ms  "
                                 f"mode={mode}")
