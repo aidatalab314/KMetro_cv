@@ -8,7 +8,7 @@ configs/
 ├── cameras.local.yaml        # 本機覆蓋（gitignore，各平台自建）
 ├── cameras.local.yaml.example# 平台設定範本
 ├── model_config.yaml         # 舊版單影片模式設定（保留）
-└── roi_records.json          # ROI 座標紀錄（自動寫入）
+└── roi_records.json          # ROI 座標紀錄（自動寫入，gitignored，各機自維護）
                               # key 格式：{camera_id}_rtsp / {camera_id}_local
                               # RTSP 與本地影片各自獨立，互不覆蓋
 ```
@@ -147,9 +147,12 @@ output:
   save_video_rtsp:  false
   save_video_local: true
   mosaic_fps:       15    # 30fps ÷ skip_frames(2) = 15
+
+reid:
+  enabled: false    # Mac 無 torchreid；明確停用（cameras.yaml 預設亦為 false）
 ```
 
-### Ubuntu RTX 5060（推論機）
+### Ubuntu RTX 5060（推論機，192.168.6.20）
 
 ```yaml
 detector:
@@ -161,6 +164,8 @@ models:
   luggage: "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
 
 features:
+  dwell_monitor:
+    alert_seconds: 5.0   # 測試中；驗證完成後改回 60.0
   fall_detector:
     imgsz: 640
 
