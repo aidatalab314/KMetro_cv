@@ -35,7 +35,7 @@ cameras:
   # ── 下行電扶梯 ────────────────────────────────────────────────────────────────
   - id: cam_escalator_down
     name: "下行電扶梯"
-    source: "rtsp://admin:123456@192.168.6.91/stream0"
+    source: "rtsp://admin:admin@192.168.6.91/stream0"
     fallback: "data/test_videos/metro/IMG_2745.MOV"
     escalator_angle_deg: -30.0   # 電扶梯傾斜角（負值=下行）
     features:
@@ -79,7 +79,7 @@ detector:
 features:
 
   dwell_monitor:
-    alert_seconds:          1.0   # ROI 內滯留超過此秒 → 告警
+    alert_seconds:          1   # ROI 內滯留超過此秒 → 告警
     grace_period_sec:       10.0   # track_id 消失後保留計時的緩衝秒數
     max_disappeared_frames: 30     # ByteTrack：ID 消失幾幀後才刪除
                                    # 有效重入窗口 ≈ 此值 ÷ (source_fps ÷ skip_frames)
@@ -121,7 +121,7 @@ features:
 
 # ── 跨攝影機 Re-ID（旅客滯留跨鏡繼承）──────────────────────────────────────
 reid:
-  enabled:             false  # 預設關閉；Ubuntu 推論機在 cameras.local.yaml 設 true
+  enabled:             true   # 預設關閉；開啟後 InferenceBus 載入 OSNet-ain 模型
   sim_threshold:       0.75    # cosine 相似度門檻（0.7=寬鬆, 0.80=嚴格）
   ttl_sec:             300.0   # gallery 記錄 TTL（秒）；超過視為人員已離站
   model_path:          ""      # 留空 → ImageNet 預訓練；填路徑 → 指定 checkpoint
@@ -143,5 +143,5 @@ output:
   save_snapshots:   true
   save_video_local: true     # 本地影片來源 → 強制存 per-camera 影片
   save_video_rtsp:  false    # RTSP 來源 → 預設不存（可在 local.yaml 覆蓋）
-  save_mosaic:      false     # 四格合成影片（dev: display loop；op: 獨立 thread）
+  save_mosaic:      false    # 四格合成影片（dev: display loop；op: 獨立 thread）
   mosaic_fps:       15       # ⚠️ 必須 = source_fps ÷ skip_frames（30÷2=15）
