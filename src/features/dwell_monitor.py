@@ -77,10 +77,12 @@ class DwellMonitor:
 
     # ── 繪製 ─────────────────────────────────────────────────────────────────
 
-    def draw(self, frame: np.ndarray, persons_in_roi: list[dict]):
+    def draw(self, frame: np.ndarray, persons_in_roi: list[dict],
+             reid_gids: "dict[int, int] | None" = None):
         """
         在每個追蹤人員的 bbox 上繪製 ID + 滯留時間。
         顏色：綠 = 正常 / 橘 = 接近門檻(>50%) / 紅 = 超過門檻
+        reid_gids: local track_id → global_id 映射（有值時顯示 G:XXX，並加 ← 跨鏡標記）
         """
         for p in persons_in_roi:
             tid = p.get("track_id", -1)
@@ -98,10 +100,25 @@ class DwellMonitor:
                 color = (0, 220, 0)      # 綠：正常
 
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            label = f"ID:{tid}  {dwell:.0f}s"
+
+            gid = reid_gids.get(tid) if reid_gids else None
+            if gid is not None:
+                label = f"G:{gid:03d}  {dwell:.0f}s"
+            else:
+                label = f"ID:{tid}  {dwell:.0f}s"
+
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
             label_y = max(y1 - 6, th + 4)
             cv2.rectangle(frame, (x1, label_y - th - 4), (x1 + tw + 4, label_y + 2),
                           (0, 0, 0), -1)
             cv2.putText(frame, label, (x1 + 2, label_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+
+            # 跨鏡繼承標記（右下角小字）
+            if gid is not None:
+                mark = "X-CAM"
+                (mw, mh), _ = cv2.getTextSize(mark, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+                cv2.rectangle(frame, (x2 - mw - 4, y2 - mh - 4), (x2, y2),
+                              (0, 0, 180), -1)
+                cv2.putText(frame, mark, (x2 - mw - 2, y2 - 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1)

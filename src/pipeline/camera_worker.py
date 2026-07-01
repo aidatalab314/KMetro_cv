@@ -424,7 +424,7 @@ class CameraWorker(threading.Thread):
                         f"繼承滯留={now - match.first_dwell_time:.0f}s")
 
         alerts = self._dwell_mon.update(persons)
-        self._dwell_mon.draw(annotated, persons)
+        self._dwell_mon.draw(annotated, persons, reid_gids=self._reid_gids)
         self.status_info["dwell_active"] = len(alerts)
 
         # ② 達到門檻：入庫 / 定期更新 embedding
