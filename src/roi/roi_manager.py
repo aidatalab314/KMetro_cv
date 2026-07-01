@@ -329,7 +329,15 @@ def has_roi_record(camera_id: str, records_path: str) -> bool:
     if not p.exists():
         return False
     with open(p) as f:
-        return camera_id in json.load(f)
+        records = json.load(f)
+    if camera_id in records:
+        return True
+    # Fallback: rtsp↔local sibling
+    if camera_id.endswith("_rtsp"):
+        return camera_id[:-5] + "_local" in records
+    if camera_id.endswith("_local"):
+        return camera_id[:-6] + "_rtsp" in records
+    return False
 
 
 def save_roi_record(camera_id: str, rois: list[dict], records_path: str):
@@ -368,7 +376,16 @@ class ROIManager:
         with open(p) as f:
             records = json.load(f)
 
-        for r in records.get(camera_id, []):
+        # Exact key first; if not found, try the rtsp↔local sibling so ROIs
+        # drawn in one mode (e.g. RTSP on Ubuntu) also work in the other (local on Mac).
+        roi_list = records.get(camera_id, [])
+        if not roi_list:
+            if camera_id.endswith("_rtsp"):
+                roi_list = records.get(camera_id[:-5] + "_local", [])
+            elif camera_id.endswith("_local"):
+                roi_list = records.get(camera_id[:-6] + "_rtsp", [])
+
+        for r in roi_list:
             # Support both new "features" (list) and legacy "feature" (str)
             if "features" in r:
                 features = r["features"]

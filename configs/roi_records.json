@@ -4,38 +4,216 @@
       "id": "roi_0",
       "label": "ROI 0",
       "features": [
-        "dwell_monitor",
-        "zone_counter",
-        "fall_detector",
-        "luggage_roll",
-        "size_classifier",
-        "fire_smoke"
+        "dwell_monitor"
       ],
       "color": [
-        200,
-        200,
-        200
+        0,
+        255,
+        255
       ],
       "points": [
         [
-          862,
-          415
+          409,
+          616
         ],
         [
-          502,
-          651
+          1471,
+          960
         ],
         [
-          1239,
-          900
+          1542,
+          561
         ],
         [
-          1399,
-          523
+          741,
+          399
+        ]
+      ]
+    }
+  ],
+  "cam_escalator_up_rtsp": [
+    {
+      "id": "roi_0",
+      "label": "ROI 0",
+      "features": [
+        "dwell_monitor"
+      ],
+      "color": [
+        0,
+        255,
+        255
+      ],
+      "points": [
+        [
+          238,
+          661
         ],
         [
-          1035,
-          378
+          1368,
+          967
+        ],
+        [
+          1467,
+          444
+        ],
+        [
+          685,
+          354
+        ]
+      ]
+    }
+  ],
+  "cam_escalator_down_local": [
+    {
+      "id": "roi_0",
+      "label": "ROI 0",
+      "features": [
+        "luggage_roll",
+        "size_classifier",
+        "zone_counter",
+        "fall_detector"
+      ],
+      "color": [
+        0,
+        0,
+        255
+      ],
+      "points": [
+        [
+          1003,
+          1027
+        ],
+        [
+          736,
+          789
+        ],
+        [
+          747,
+          738
+        ],
+        [
+          601,
+          603
+        ],
+        [
+          232,
+          154
+        ],
+        [
+          480,
+          130
+        ],
+        [
+          859,
+          507
+        ],
+        [
+          997,
+          561
+        ],
+        [
+          1006,
+          627
+        ],
+        [
+          1270,
+          738
+        ]
+      ]
+    }
+  ],
+  "cam_elevator_lobby_local": [
+    {
+      "id": "roi_0",
+      "label": "ROI 0",
+      "features": [
+        "zone_counter"
+      ],
+      "color": [
+        255,
+        0,
+        255
+      ],
+      "points": [
+        [
+          952,
+          844
+        ],
+        [
+          445,
+          583
+        ],
+        [
+          841,
+          174
+        ],
+        [
+          1401,
+          337
+        ]
+      ]
+    }
+  ],
+  "cam_escalator_down_rtsp": [
+    {
+      "id": "roi_0",
+      "label": "ROI 0",
+      "features": [
+        "dwell_monitor"
+      ],
+      "color": [
+        0,
+        255,
+        255
+      ],
+      "points": [
+        [
+          799,
+          396
+        ],
+        [
+          403,
+          615
+        ],
+        [
+          1473,
+          955
+        ],
+        [
+          1548,
+          544
+        ]
+      ]
+    }
+  ],
+  "cam_elevator_lobby_rtsp": [
+    {
+      "id": "roi_0",
+      "label": "ROI 0",
+      "features": [
+        "dwell_monitor"
+      ],
+      "color": [
+        0,
+        255,
+        255
+      ],
+      "points": [
+        [
+          273,
+          535
+        ],
+        [
+          1425,
+          772
+        ],
+        [
+          1470,
+          369
+        ],
+        [
+          606,
+          303
         ]
       ]
     }

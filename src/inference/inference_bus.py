@@ -99,27 +99,34 @@ class InferenceBus:
         self._reid_extractor = None
         self.gallery: "ReIDGallery | None" = None
         if reid_cfg.get("enabled", False):
-            import torchreid as _torchreid
-            _dev = str(det_cfg.get("device", "0"))
-            if _dev == "mps":
-                _reid_dev = "cpu"   # torchreid MPS 支援不穩定
-            elif _dev.isdigit():
-                _reid_dev = f"cuda:{_dev}"
-            else:
-                _reid_dev = _dev    # "cuda" / "cpu"
-            _model_path = reid_cfg.get("model_path", "") or ""
-            self._reid_extractor = _torchreid.utils.FeatureExtractor(
-                model_name="osnet_ain_x1_0",
-                model_path=_model_path,
-                device=_reid_dev,
-            )
-            self.gallery = ReIDGallery(
-                sim_threshold=reid_cfg.get("sim_threshold", 0.75),
-                ttl_sec=reid_cfg.get("ttl_sec", 300.0),
-            )
-            log("INFO", f"[InferenceBus] ReID extractor 就緒  "
-                        f"device={_reid_dev}  sim_threshold={reid_cfg.get('sim_threshold', 0.75)}  "
-                        f"ttl={reid_cfg.get('ttl_sec', 300):.0f}s")
+            try:
+                import torchreid as _torchreid
+            except ImportError as e:
+                log("WARN", f"[InferenceBus] reid.enabled=true 但 torchreid 無法載入（{e}）"
+                            "；ReID 停用。請安裝：pip install torchreid gdown tensorboard")
+                _torchreid = None
+
+            if _torchreid is not None:
+                _dev = str(det_cfg.get("device", "0"))
+                if _dev == "mps":
+                    _reid_dev = "cpu"   # torchreid MPS 支援不穩定
+                elif _dev.isdigit():
+                    _reid_dev = f"cuda:{_dev}"
+                else:
+                    _reid_dev = _dev    # "cuda" / "cpu"
+                _model_path = reid_cfg.get("model_path", "") or ""
+                self._reid_extractor = _torchreid.utils.FeatureExtractor(
+                    model_name="osnet_ain_x1_0",
+                    model_path=_model_path,
+                    device=_reid_dev,
+                )
+                self.gallery = ReIDGallery(
+                    sim_threshold=reid_cfg.get("sim_threshold", 0.75),
+                    ttl_sec=reid_cfg.get("ttl_sec", 300.0),
+                )
+                log("INFO", f"[InferenceBus] ReID extractor 就緒  "
+                            f"device={_reid_dev}  sim_threshold={reid_cfg.get('sim_threshold', 0.75)}  "
+                            f"ttl={reid_cfg.get('ttl_sec', 300):.0f}s")
 
         log("INFO", f"[InferenceBus] 啟動完成  cameras={self._cam_order}  "
                     f"person_imgsz={self._person_imgsz}  timeout={batch_timeout*1000:.0f}ms")
