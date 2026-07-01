@@ -93,10 +93,44 @@ class InferenceBus:
 
         threading.Thread(target=self._run, daemon=True,
                          name="inference-bus").start()
+        # ── ReID extractor + gallery（跨攝影機滯留繼承）────────────────────
+        from src.features.reid_gallery import ReIDGallery
+        reid_cfg = cfg.get("reid", {})
+        self._reid_extractor = None
+        self.gallery: "ReIDGallery | None" = None
+        if reid_cfg.get("enabled", False):
+            import torchreid as _torchreid
+            _dev = str(det_cfg.get("device", "0"))
+            if _dev == "mps":
+                _reid_dev = "cpu"   # torchreid MPS 支援不穩定
+            elif _dev.isdigit():
+                _reid_dev = f"cuda:{_dev}"
+            else:
+                _reid_dev = _dev    # "cuda" / "cpu"
+            _model_path = reid_cfg.get("model_path", "") or ""
+            self._reid_extractor = _torchreid.utils.FeatureExtractor(
+                model_name="osnet_ain_x1_0",
+                model_path=_model_path,
+                device=_reid_dev,
+            )
+            self.gallery = ReIDGallery(
+                sim_threshold=reid_cfg.get("sim_threshold", 0.75),
+                ttl_sec=reid_cfg.get("ttl_sec", 300.0),
+            )
+            log("INFO", f"[InferenceBus] ReID extractor 就緒  "
+                        f"device={_reid_dev}  sim_threshold={reid_cfg.get('sim_threshold', 0.75)}  "
+                        f"ttl={reid_cfg.get('ttl_sec', 300):.0f}s")
+
         log("INFO", f"[InferenceBus] 啟動完成  cameras={self._cam_order}  "
                     f"person_imgsz={self._person_imgsz}  timeout={batch_timeout*1000:.0f}ms")
 
     # ── 外部介面（Worker 呼叫）──────────────────────────────────────────────
+
+    def extract_reid(self, crop_bgr: np.ndarray) -> "np.ndarray | None":
+        """提取 person crop 的外觀 embedding（512d numpy array）。ReID 未啟用時回傳 None。"""
+        if self._reid_extractor is None:
+            return None
+        return self._reid_extractor([crop_bgr]).cpu().numpy()[0]
 
     def submit(self, cam_id: str,
                preprocessed: np.ndarray,

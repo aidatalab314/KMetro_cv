@@ -43,7 +43,8 @@ def _build_gst_rtsp_pipeline(rtsp_url: str, hw_accel: bool = True) -> str:
     src_props = f'location="{rtsp_url}" latency=0 protocols=tcp'
 
     if hw_accel:
-        # Jetson：nvv4l2decoder 硬體解碼（H.264 / H.265 均支援）
+        # GStreamer HW 硬體解碼（nvv4l2decoder，NV embedded platform 專用）
+        # Ubuntu x86 不支援此 pipeline，open() 會自動 fallback 到 SW
         return (
             f"rtspsrc {src_props} ! "
             f"{depay} ! {parse} ! nvv4l2decoder ! "
@@ -51,7 +52,7 @@ def _build_gst_rtsp_pipeline(rtsp_url: str, hw_accel: bool = True) -> str:
             "videoconvert ! video/x-raw,format=BGR ! "
             "appsink drop=true max-buffers=1 sync=false"
         )
-    # Ubuntu x86 / 非 Jetson：avdec 軟體解碼
+    # GStreamer SW 軟體解碼（avdec，Ubuntu x86 標準路徑）
     avdec = "avdec_h264" if codec == "h264" else "avdec_h265"
     return (
         f"rtspsrc {src_props} ! "
@@ -65,10 +66,10 @@ class RTSPReader:
     """
     影像來源讀取器。
     RTSP 來源依序嘗試：
-      1. GStreamer HW（Jetson nvv4l2decoder，H.264/H.265 自動偵測）
-      2. GStreamer SW（avdec_h264 / avdec_h265，需 gstreamer1.0-libav）
-      3. FFmpeg（Mac / Ubuntu 無 GStreamer 環境）
-    codec 由 URL 關鍵字自動推測（含 h264/264/avc → H.264，否則 H.265）。
+      1. GStreamer SW（avdec_h264 / avdec_h265，Ubuntu x86 標準路徑）
+      2. GStreamer HW（nvv4l2decoder，NV embedded platform 備用）
+      3. FFmpeg（Mac / 無 GStreamer 環境 fallback）
+    codec 由 URL 關鍵字自動推測（含 h265/265/hevc → H.265，否則 H.264）。
     本地檔案 / webcam 直接使用 cv2.VideoCapture 預設 backend。
     """
 

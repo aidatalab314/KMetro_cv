@@ -247,7 +247,35 @@ pip install -r requirements.txt
 pip install "ultralytics[export]"
 ```
 
-### 6.6 驗證整合
+### 6.6 torchreid（跨攝影機 Re-ID，可選）
+
+跨攝影機滯留計時繼承功能需要 OSNet-ain 外觀特徵模型。
+
+```bash
+pip install torchreid gdown
+
+# 驗證（首次執行會自動下載 ~11MB checkpoint）
+python - <<'EOF'
+import torchreid, numpy as np
+ext = torchreid.utils.FeatureExtractor(model_name='osnet_ain_x1_0', device='cuda')
+dummy = np.random.randint(0, 255, (256, 128, 3), dtype=np.uint8)
+emb = ext([dummy])
+print(f"ReID OK: shape={emb.shape}, device={emb.device}")
+# 預期: ReID OK: shape=torch.Size([1, 512]), device=cuda:0
+EOF
+```
+
+啟用方式（在 `cameras.local.yaml` 加入）：
+
+```yaml
+reid:
+  enabled: true
+```
+
+> checkpoint 自動快取至 `~/.cache/torch/checkpoints/osnet_ain_x1_0_imagenet.pth`。
+> 若需更高精度，可自行取得 MSMT17 版本並設定 `reid.model_path`。
+
+### 6.7 驗證整合
 
 ```bash
 python -c "
@@ -365,9 +393,17 @@ models:
   person:     "models/fall_detection/yolo12l.engine"      # TensorRT FP16
   luggage:    "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
 
+features:
+  fall_detector:
+    imgsz: 640
+
 output:
-  save_video_rtsp: true
-  mosaic_fps:      30    # source_fps(30) ÷ skip_frames(1) = 30
+  save_video_rtsp:  false
+  save_video_local: false
+  mosaic_fps:       30    # source_fps(30) ÷ skip_frames(1) = 30
+
+reid:
+  enabled: true           # 啟用跨攝影機 Re-ID（需已完成 6.6 torchreid 安裝）
 ```
 
 **各平台啟動指令**：
@@ -410,7 +446,16 @@ print('open:', r.open(), '| file:', r.is_file())
 r.release()
 "
 
-# 5. 全系統啟動測試（headless，10 秒後自動停止）
+# 5. ReID extractor（torchreid 已安裝時）
+python - <<'EOF'
+import torchreid, numpy as np
+ext = torchreid.utils.FeatureExtractor(model_name='osnet_ain_x1_0', device='cuda')
+dummy = np.random.randint(0, 255, (256, 128, 3), dtype=np.uint8)
+emb = ext([dummy])
+print(f"ReID OK: shape={emb.shape}, device={emb.device}")
+EOF
+
+# 6. 全系統啟動測試（headless，10 秒後自動停止）
 timeout 10 python src/pipeline/multistream.py --mode op --cameras cam_platform_north || true
 ```
 

@@ -10,7 +10,8 @@
 
 | 功能 | 模組 | 狀態 | 備註 |
 |------|------|------|------|
-| 功能1 旅客滯留 | `DwellMonitor` + ByteTrack | ✓ | Re-ID 限制見 D1 |
+| 功能1 旅客滯留 | `DwellMonitor` + ByteTrack | ✓ | |
+| 功能1+ 跨攝影機 Re-ID | `ReIDGallery` + OSNet-ain | ✓ | 需啟用 `reid.enabled: true`，見 D1 |
 | 功能2 火光煙霧 | `FireSmokeDetector`（YOLOv8n） | ✓ | luminous0219/fire-and-smoke-detection-yolov8 |
 | 功能3 人流偵測 | `ZoneCounter` | ✓ | |
 | 功能4a 電扶梯跌倒 | `FallDetector` + `PoseDetector` | ✓ | escalator_angle 尚未整合（見 D2） |
@@ -36,7 +37,7 @@
 | Mosaic 四格合成影片 | ✓ | dev: display loop；op: 獨立 thread |
 | Display 流暢度優化 | ✓ | cache last_mosaic，drain queue，sleep(2ms) |
 | FPS 量測（rolling window） | ✓ | 1s 滾動視窗；log 含 read_ms / infer_ms |
-| Jetson TensorRT 部署 | ⏳ | 架構相同，尚未現場驗證 |
+| 跨攝影機 Re-ID（OSNet-ain） | ✓ | `reid.enabled: true` 啟用，Ubuntu 推論機專用 |
 
 ---
 
@@ -95,15 +96,23 @@ python -c "from ultralytics import YOLO; YOLO('models/luggage/yolo_luggage_best.
 
 ### D1：滯留偵測 Re-ID 策略
 
-**現況**：ByteTrack 有效重入窗口約 **2 秒**（`max_disappeared_frames=30` ÷ `effective_fps=15`）。
+**現況**：已實作跨攝影機 Re-ID（`ReIDGallery` + OSNet-ain-x1_0）。
 
-| 選項 | 做法 | 代價 |
-|------|------|------|
-| A 接受歸零（現行） | 不改動 | 長時間離開後回來不計入 |
-| B 延長 ByteTrack 保留 | `max_disappeared_frames` 拉到 150+ | Ghost track 風險 |
-| C 外觀 ReID | BoT-SORT + OSNet embedding | 效能增加，需額外模型 |
+| 層次 | 機制 | 有效範圍 |
+|------|------|----------|
+| 同路短暫消失 | ByteTrack grace period（`max_disappeared_frames=30`，2 秒窗口） | 遮蔽 / 偵測失敗 |
+| 跨路重新入鏡 | OSNet embedding + cosine similarity | 同機 4 路之間 |
 
-**待決定**：業務上「人離開再回來」是否要繼續計時？
+**已知限制**：
+- 同一路攝影機離開 > 2 秒後回來 → ByteTrack 分配新 ID → Re-ID 查詢補救（若外觀特徵夠穩定）
+- embedding 使用 ImageNet 預訓練（非行人資料集）；換 MSMT17 checkpoint 可提升精度
+  ```bash
+  # 下載 MSMT17 checkpoint（可選）
+  wget -P ~/.cache/torch/checkpoints/ \
+    https://download.openmmlab.com/mmtracking/reid/tracktor_reid_r50_iter25245.pth
+  # 或從 torchreid model zoo 取得 osnet_ain_x1_0_msmt17.pth
+  # 取得後在 cameras.local.yaml 設定：reid.model_path: "path/to/osnet_ain_x1_0_msmt17.pth"
+  ```
 
 ---
 
@@ -131,9 +140,9 @@ python -c "from ultralytics import YOLO; YOLO('models/luggage/yolo_luggage_best.
 ## 下一步（優先順序）
 
 1. **端對端測試**：接上 4 台真實 30fps 攝影機，驗證 ROI / 偵測 / 告警完整流程
-2. **Jetson Orin 部署驗證**：在 Jetson 上 export engine + 測量效能（架構相同，應可直接移植）
+2. **Re-ID 啟用驗證**：在 Ubuntu 設 `reid.enabled: true`，確認跨攝影機計時繼承正確
 3. **整合 escalator_angle_deg**（D2）：補正電扶梯傾斜誤判
-4. **決定 Re-ID 策略**（D1）
+4. **Re-ID checkpoint 升級**（D1）：換用 MSMT17 預訓練提升跨視角精度
 5. **EventManager hook 實作**：喇叭告警 / API 推播
 
 ---

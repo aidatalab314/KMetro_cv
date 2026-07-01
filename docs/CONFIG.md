@@ -51,7 +51,7 @@ models:
 ```yaml
 detector:
   conf:         0.4     # YOLO 信心門檻
-  device:       "mps"   # Mac→"mps" | Jetson→"0" | CPU→"cpu"
+  device:       "mps"   # Mac→"mps" | Ubuntu RTX (CUDA)→"0" | CPU→"cpu"
   imgsz:        640     # 推論解析度（640 平衡 / 1280 細節）
   skip_frames:  2       # 每 N 幀推論一次（減少計算量）
 ```
@@ -138,37 +138,83 @@ cp configs/cameras.local.yaml.example configs/cameras.local.yaml
 detector:
   device: "mps"
   skip_frames: 2
+
+features:
+  fall_detector:
+    imgsz: 640    # 覆蓋預設 1280（Mac MPS 效能考量）
+
+output:
+  save_video_rtsp:  false
+  save_video_local: true
+  mosaic_fps:       15    # 30fps ÷ skip_frames(2) = 15
 ```
 
-### Jetson Orin（部署）
+### Ubuntu RTX 5060（推論機）
 
 ```yaml
 detector:
-  device: "0"        # CUDA GPU 0
-  skip_frames: 1     # TensorRT 夠快不需跳幀
-output:
-  save_video_rtsp: true   # 部署環境通常需要錄影存證
-```
+  device:      "0"     # CUDA GPU 0
+  skip_frames: 1       # TRT 夠快，不需跳幀
 
-使用 TensorRT 模型時，在 local 覆蓋模型路徑：
-
-```yaml
 models:
-  person:  "models/fall_detection/yolo12l.engine"
-  luggage: "models/luggage/yolo_luggage_best.engine"
+  person:  "models/fall_detection/yolo12l.engine"      # TensorRT FP16
+  luggage: "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
+
+features:
+  fall_detector:
+    imgsz: 640
+
+output:
+  save_video_rtsp: false
+  save_video_local: false
+  mosaic_fps:      30    # 30fps ÷ skip_frames(1) = 30
+
+reid:
+  enabled: true          # 啟用跨攝影機 Re-ID（需 torchreid 已安裝）
 ```
 
 ---
 
 ## 平台對照表
 
-| 項目 | Mac M1 | Jetson Orin |
+| 項目 | Mac M1（開發） | Ubuntu RTX 5060（推論） |
 |------|--------|-------------|
 | `device` | `"mps"` | `"0"` |
-| RTSP 解碼 | FFmpeg（cv2 預設） | GStreamer nvv4l2decoder |
-| 模型格式 | `.pt`（PyTorch MPS） | `.engine`（TensorRT） |
+| RTSP 解碼 | FFmpeg（cv2 預設） | GStreamer avdec（SW） |
+| 模型格式 | `.pt`（PyTorch MPS） | `.engine`（TensorRT FP16） |
+| 推論模式 | 直接模式（bus=None） | InferenceBus batch×4 |
+| Re-ID | 不支援 | `reid.enabled: true` 啟用 |
 | `skip_frames` | 2 | 1 |
 | `mosaic_fps` | 15（30fps÷2） | 30（30fps÷1） |
+
+---
+
+## Reid 設定（`reid:`）
+
+跨攝影機滯留計時繼承，需搭配 Ubuntu 推論模式（InferenceBus）使用。
+
+```yaml
+reid:
+  enabled:             false   # 預設關閉
+  sim_threshold:       0.75    # cosine 相似度門檻（0.7=寬鬆，0.80=嚴格）
+  ttl_sec:             300.0   # gallery 記錄 TTL（秒）；超過視為人員已離站
+  model_path:          ""      # 留空 → ImageNet 預訓練；填路徑 → 指定 checkpoint
+  update_interval_sec: 10.0   # 持續滯留者更新 embedding 的間隔（秒）
+```
+
+| 參數 | 說明 |
+|------|------|
+| `enabled` | 開啟後 InferenceBus 載入 OSNet-ain-x1_0 模型（~11MB） |
+| `sim_threshold` | cosine similarity 超過此值才判定為同一人；建議 0.72–0.80 |
+| `ttl_sec` | gallery 記錄存活時間；5 分鐘足以覆蓋站內移動距離 |
+| `model_path` | 空 = ImageNet 預訓練；MSMT17 checkpoint 精度更高 |
+| `update_interval_sec` | 每 N 秒更新 embedding（防止外觀變化導致後續比對失敗） |
+
+**依賴套件**（Ubuntu 需額外安裝）：
+
+```bash
+pip install torchreid gdown
+```
 
 ---
 

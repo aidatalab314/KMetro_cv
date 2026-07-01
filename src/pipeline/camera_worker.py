@@ -185,6 +185,14 @@ class CameraWorker(threading.Thread):
 
         self._feat = enabled
 
+        # ── ReID 狀態（跨攝影機滯留計時繼承）────────────────────────────────
+        reid_cfg = global_cfg.get("reid", {})
+        self._reid_update_interval  = reid_cfg.get("update_interval_sec", 10.0)
+        self._enrolled_tids: set[int]         = set()   # 已 enroll 的本機 track_id
+        self._reid_gids: dict[int, int]       = {}      # local tid → global_id
+        self._last_reid_update: dict[int, float] = {}   # tid → 上次更新 embedding 的時間
+        self._last_gallery_cleanup = 0.0
+
         # ── 輸出影片 ─────────────────────────────────────────────────────────
         self._writer           = None
         self._video_dir        = Path(out_cfg.get("video_dir", "outputs/videos"))
@@ -363,7 +371,7 @@ class CameraWorker(threading.Thread):
         alert_persons = fall_in_roi if fall_in_roi else pose_in_roi
 
         # Step 4：功能模組
-        self._run_dwell_monitor(annotated, dwell_in_roi)
+        self._run_dwell_monitor(annotated, dwell_in_roi, frame)
         self._run_zone_counter(annotated, zone_in_roi)
         self._run_fall_logic(annotated, fall_in_roi, alert_persons)
         self._run_luggage_roll(annotated, lug_roll_roi, all_persons)
@@ -386,12 +394,78 @@ class CameraWorker(threading.Thread):
 
     # ── 功能模組 ─────────────────────────────────────────────────────────────
 
-    def _run_dwell_monitor(self, annotated: np.ndarray, persons: list[dict]):
+    def _run_dwell_monitor(self, annotated: np.ndarray,
+                           persons: list[dict], frame: np.ndarray):
         if self._dwell_mon is None:
             return
+
+        gallery = self._bus.gallery if self._bus is not None else None
+        now = time.time()
+
+        # ① 新人入鏡：查 gallery 看是否為跨攝影機滯留者
+        if gallery is not None:
+            for p in persons:
+                tid = p.get("track_id", -1)
+                if tid < 0 or tid in self._dwell_mon._first_seen:
+                    continue  # 已在本機計時，跳過
+                crop = self._extract_crop(frame, p["bbox"])
+                if crop is None:
+                    continue
+                emb = self._bus.extract_reid(crop)
+                if emb is None:
+                    continue
+                match = gallery.query(emb)
+                if match is not None:
+                    self._dwell_mon.inherit_timer(tid, match.first_dwell_time)
+                    log("INFO",
+                        f"[{self.camera_id}] ReID 匹配 "
+                        f"local_tid={tid} gid={match.global_id} "
+                        f"from={match.cam_id} "
+                        f"繼承滯留={now - match.first_dwell_time:.0f}s")
+
         alerts = self._dwell_mon.update(persons)
         self._dwell_mon.draw(annotated, persons)
         self.status_info["dwell_active"] = len(alerts)
+
+        # ② 達到門檻：入庫 / 定期更新 embedding
+        if gallery is not None:
+            for p in persons:
+                tid = p.get("track_id", -1)
+                if tid < 0:
+                    continue
+                dwell = self._dwell_mon.get_dwell(tid)
+                if dwell < self._dwell_mon._alert_sec:
+                    continue
+
+                if tid not in self._enrolled_tids:
+                    crop = self._extract_crop(frame, p["bbox"])
+                    if crop is not None:
+                        emb = self._bus.extract_reid(crop)
+                        if emb is not None:
+                            first_t = self._dwell_mon._first_seen.get(tid, now - dwell)
+                            gid = gallery.enroll(emb, first_t, self.camera_id)
+                            self._enrolled_tids.add(tid)
+                            self._reid_gids[tid] = gid
+                            log("INFO",
+                                f"[{self.camera_id}] ReID enroll "
+                                f"tid={tid} → gid={gid} dwell={dwell:.0f}s")
+                else:
+                    last_upd = self._last_reid_update.get(tid, 0.0)
+                    if now - last_upd >= self._reid_update_interval:
+                        gid = self._reid_gids.get(tid)
+                        if gid is not None:
+                            crop = self._extract_crop(frame, p["bbox"])
+                            if crop is not None:
+                                emb = self._bus.extract_reid(crop)
+                                if emb is not None:
+                                    gallery.update_embedding(gid, emb, self.camera_id)
+                                    self._last_reid_update[tid] = now
+
+            if now - self._last_gallery_cleanup > 60.0:
+                gallery.cleanup()
+                self._last_gallery_cleanup = now
+
+        # ③ 告警觸發
         for p in alerts:
             rois = self._roi.get_containing_rois_for_feature(p["cx"], p["cy"], "dwell_monitor")
             fired = self._events.trigger(
@@ -410,6 +484,19 @@ class CameraWorker(threading.Thread):
                     x1, y1, x2, y2 = p["bbox"]
                     cv2.rectangle(annotated, (x1-3, y1-3), (x2+3, y2+3),
                                   (0, 0, 255), 3)
+
+    @staticmethod
+    def _extract_crop(frame: np.ndarray, bbox: tuple,
+                      pad: float = 0.1) -> "np.ndarray | None":
+        """從 frame 裁出 person bbox（含 pad），太小的 crop 回傳 None。"""
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        bw, bh = x2 - x1, y2 - y1
+        if bw < 10 or bh < 10:
+            return None
+        px, py = max(1, int(bw * pad)), max(1, int(bh * pad))
+        return frame[max(0, y1 - py):min(h, y2 + py),
+                     max(0, x1 - px):min(w, x2 + px)]
 
     def _run_zone_counter(self, annotated: np.ndarray, persons: list[dict]):
         if self._zone_ctr is None:

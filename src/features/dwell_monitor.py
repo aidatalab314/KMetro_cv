@@ -66,6 +66,15 @@ class DwellMonitor:
             return 0.0
         return time.time() - self._first_seen[track_id]
 
+    def inherit_timer(self, track_id: int, first_seen_wall_time: float):
+        """
+        跨攝影機 Re-ID 匹配後繼承原始計時起點。
+        僅在本機尚未記錄此 track_id 時生效（避免覆蓋已有計時）。
+        """
+        if track_id not in self._first_seen:
+            self._first_seen[track_id]  = first_seen_wall_time
+            self._last_in_roi[track_id] = time.time()
+
     # ── 繪製 ─────────────────────────────────────────────────────────────────
 
     def draw(self, frame: np.ndarray, persons_in_roi: list[dict]):
