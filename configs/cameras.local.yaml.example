@@ -31,20 +31,21 @@
 # ══════════════════════════════════════════════════════════════════════════════
 # Ubuntu 24.04 + GeForce RTX 5060（推論機，實驗室 192.168.0.87）
 # 啟動指令：python src/pipeline/multistream.py --source rtsp --mode op
-# 前置：需先安裝 torchreid（pip install torchreid gdown）
+# 前置：需先安裝 torchreid（pip install torchreid gdown tensorboard）
 # ══════════════════════════════════════════════════════════════════════════════
 # detector:
 #   device:       "0"      # CUDA GPU 0
-#   skip_frames:  1        # TensorRT 夠快，不需跳幀；不足可改 2
+#   skip_frames:  1        # TensorRT 夠快；不足可改 2
 #
 # models:
 #   person:     "models/fall_detection/yolo12l.engine"      # TensorRT FP16
 #   luggage:    "models/luggage/yolo_luggage_best.engine"   # TensorRT FP16
 #
 # features:
+#   dwell_monitor:
+#     alert_seconds: 5.0   # 測試階段縮短；正式上線改回 60.0
 #   fall_detector:
 #     imgsz: 640
-#   fall_detector:
 #     pose_fallback:
 #       device: "0"        # RTMO 也用 CUDA（效能允許時才開 enabled: true）
 #
@@ -55,9 +56,9 @@
 #
 # reid:
 #   enabled: true           # 啟用跨攝影機 Re-ID（需 torchreid 已安裝）
-#   # sim_threshold: 0.75   # 相似度門檻（預設 0.75）
-#   # ttl_sec: 300.0         # gallery TTL（預設 5 分鐘）
-#   # model_path: ""         # 留空 → ImageNet；填路徑 → MSMT17 checkpoint
+#   sim_threshold: 0.75     # cosine 相似度門檻（0.70=寬鬆, 0.80=嚴格）
+#   ttl_sec: 300.0          # gallery TTL（秒）；超過視為人員已離站
+#   model_path: ""          # 留空 → ImageNet；填路徑 → MSMT17 checkpoint
 
 
 # ══════════════════════════════════════════════════════════════════════════════

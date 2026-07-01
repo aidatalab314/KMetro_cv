@@ -38,6 +38,9 @@ ref/
 # Local config overrides (platform-specific, not versioned)
 configs/cameras.local.yaml
 
+# ROI records — drawn per machine/camera-mode; each machine keeps its own copy
+configs/roi_records.json
+
 # Event output (auto-generated) — .gitkeep 保留目錄結構
 data/snapshots/*
 !data/snapshots/.gitkeep

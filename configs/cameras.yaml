@@ -79,7 +79,7 @@ detector:
 features:
 
   dwell_monitor:
-    alert_seconds:          1   # ROI 內滯留超過此秒 → 告警
+    alert_seconds:          60.0   # ROI 內滯留超過此秒 → 告警
     grace_period_sec:       10.0   # track_id 消失後保留計時的緩衝秒數
     max_disappeared_frames: 30     # ByteTrack：ID 消失幾幀後才刪除
                                    # 有效重入窗口 ≈ 此值 ÷ (source_fps ÷ skip_frames)
@@ -121,7 +121,7 @@ features:
 
 # ── 跨攝影機 Re-ID（旅客滯留跨鏡繼承）──────────────────────────────────────
 reid:
-  enabled:             true   # 預設關閉；開啟後 InferenceBus 載入 OSNet-ain 模型
+  enabled:             false  # 預設關閉；Ubuntu 在 cameras.local.yaml 覆蓋為 true
   sim_threshold:       0.75    # cosine 相似度門檻（0.7=寬鬆, 0.80=嚴格）
   ttl_sec:             300.0   # gallery 記錄 TTL（秒）；超過視為人員已離站
   model_path:          ""      # 留空 → ImageNet 預訓練；填路徑 → 指定 checkpoint
