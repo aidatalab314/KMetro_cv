@@ -85,8 +85,11 @@ class InferenceBus:
         self._t_infer_sum = 0.0
         self._t_wait_sum  = 0.0
 
-        # ── 串行 fallback（TRT engine batch=1 時自動切換）──────────────────
-        self._seq_mode = False
+        # ── 推論模式：固定串行，保證每路 ByteTrack 狀態獨立 ─────────────────
+        # batch mode 下 model.track([cam0,cam1,cam2,cam3]) 共用單一 tracker，
+        # 跨攝影機畫面混入同一流 → track_id 大量變 -1，dwell/fall 失效。
+        # TRT engine (batch=N) 也建議串行以維持 track 正確性；僅在確認正確後再改 False。
+        self._seq_mode = True
         # 每路獨立的 ByteTrack 狀態（串行模式用）
         self._seq_person_trackers:  list = [[] for _ in range(n)]
         self._seq_luggage_trackers: list = [[] for _ in range(n)]
