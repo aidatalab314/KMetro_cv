@@ -417,6 +417,9 @@ class CameraWorker(threading.Thread):
                 match = gallery.query(emb, debug_label=f"{self.camera_id}/tid={tid}")
                 if match is not None:
                     self._dwell_mon.inherit_timer(tid, match.first_dwell_time)
+                    # 繼承原始 gid，並標記已處理，避免後面 enroll 邏輯再產生新 gid
+                    self._enrolled_tids.add(tid)
+                    self._reid_gids[tid] = match.global_id
                     log("INFO",
                         f"[{self.camera_id}] ReID 匹配 "
                         f"local_tid={tid} gid={match.global_id} "
