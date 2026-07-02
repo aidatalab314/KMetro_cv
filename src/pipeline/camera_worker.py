@@ -414,7 +414,7 @@ class CameraWorker(threading.Thread):
                 emb = self._bus.extract_reid(crop)
                 if emb is None:
                     continue
-                match = gallery.query(emb)
+                match = gallery.query(emb, debug_label=f"{self.camera_id}/tid={tid}")
                 if match is not None:
                     self._dwell_mon.inherit_timer(tid, match.first_dwell_time)
                     log("INFO",

@@ -61,7 +61,8 @@ class ReIDGallery:
             )
         return gid
 
-    def query(self, embedding: np.ndarray) -> "GalleryRecord | None":
+    def query(self, embedding: np.ndarray,
+              debug_label: str = "") -> "GalleryRecord | None":
         """
         尋找 cosine similarity 最高且超過門檻的記錄。
         過期（TTL）記錄不參與比對。
@@ -69,15 +70,28 @@ class ReIDGallery:
         emb = _normalize(embedding)
         best: GalleryRecord | None = None
         best_sim = self._sim_threshold
+        top_candidate: GalleryRecord | None = None
+        top_sim = -1.0
         now = time.time()
         with self._lock:
             for rec in self._records.values():
                 if now - rec.last_seen_time > self._ttl:
                     continue
                 sim = float(np.dot(emb, rec.embedding))
+                if sim > top_sim:
+                    top_sim = sim
+                    top_candidate = rec
                 if sim > best_sim:
                     best_sim = sim
                     best = rec
+        # 始終記錄最高分（不論是否過門檻），方便調整 threshold
+        if top_candidate is not None:
+            hit = best is not None
+            log("DEBUG",
+                f"[ReIDGallery] query {debug_label} "
+                f"best_sim={top_sim:.3f} threshold={self._sim_threshold:.2f} "
+                f"gid={top_candidate.global_id} cam={top_candidate.cam_id} "
+                f"{'✓ match' if hit else '✗ miss'}")
         return best
 
     def update_embedding(self, global_id: int,
